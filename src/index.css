@@ -130,12 +130,14 @@ header p {
 }
 
 .filters label,
-.expense-form label {
+.expense-form label,
+.import-form label {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 0.85rem;
   color: var(--text-secondary);
+  min-width: 0;
 }
 
 input,
@@ -146,6 +148,7 @@ button {
 
 input,
 select {
+  width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;

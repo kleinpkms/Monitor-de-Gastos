@@ -11,6 +11,7 @@ const today = new Date()
 export default function ImportInvoice({ categories, onImported }) {
   const [expanded, setExpanded] = useState(false)
   const [file, setFile] = useState(null)
+  const [password, setPassword] = useState('')
   const [referenceMonth, setReferenceMonth] = useState(today.getMonth() + 1)
   const [referenceYear, setReferenceYear] = useState(today.getFullYear())
   const [rows, setRows] = useState([])
@@ -27,7 +28,7 @@ export default function ImportInvoice({ categories, onImported }) {
     setParseError(null)
     setSuccessMessage(null)
     try {
-      const transactions = await parseInvoice(file, referenceMonth, referenceYear)
+      const transactions = await parseInvoice(file, referenceMonth, referenceYear, password)
       setRows(transactions)
     } catch (err) {
       setParseError(err?.response?.data?.detail ?? 'Não foi possível processar o PDF.')
@@ -86,6 +87,16 @@ export default function ImportInvoice({ categories, onImported }) {
                 accept="application/pdf"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 required
+              />
+            </label>
+            <label>
+              Senha do PDF (se houver)
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="opcional"
+                autoComplete="off"
               />
             </label>
             <label>

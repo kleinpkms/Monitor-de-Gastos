@@ -38,11 +38,14 @@ export async function bulkCreateExpenses(items) {
   return data
 }
 
-export async function parseInvoice(file, referenceMonth, referenceYear) {
+export async function parseInvoice(file, referenceMonth, referenceYear, password) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('reference_month', referenceMonth)
   formData.append('reference_year', referenceYear)
+  if (password) {
+    formData.append('password', password)
+  }
   const { data } = await api.post('/imports/parse', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
