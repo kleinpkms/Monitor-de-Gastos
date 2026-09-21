@@ -16,7 +16,10 @@ O que dá para fazer:
   diferentes, com as categorias já sugeridas por palavra-chave;
 - editar tudo numa tabela, excluir lançamento linha a linha e exportar CSV;
 - **entrar com a sua conta**: cada pessoa tem a própria base de lançamentos,
-  categorias e limites, e não enxerga a das outras.
+  categorias e limites, e não enxerga a das outras;
+- **compartilhar a base**: dá para convidar outra pessoa pelo e-mail e os dois
+  passarem a lançar no mesmo lugar — a conta conjunta de um casal, sem ninguém
+  perder a base individual.
 
 Os dados ficam num SQLite local por padrão, ou num Postgres quando existe a
 variável `DATABASE_URL` — é a mesma aplicação nos dois casos.
@@ -128,6 +131,35 @@ acesso". Para fechar o cadastro de vez, o caminho é o próprio Auth0
 
 Sem nenhum lançamento, a aba **Ajustes** tem um botão para gerar alguns meses
 de dados fictícios, só para ver o dashboard cheio; depois é só apagar tudo.
+
+## Compartilhando a base (conta em conjunto)
+
+Cada conta nasce com uma base só dela. Quando duas pessoas querem lançar no
+mesmo lugar — as contas da casa, por exemplo —, uma convida a outra:
+
+1. Quem é dono da base abre **Ajustes > Quem mais usa esta base**.
+2. Digita o e-mail da conta que a outra pessoa usa para entrar e clica em
+   **Dar acesso a esta base**. O convite pode ser feito antes mesmo de a
+   pessoa ter entrado no dashboard alguma vez — ele fica guardado pelo e-mail.
+3. Da próxima vez que a convidada entrar, aparece um seletor **Base em uso**
+   no pé da barra lateral, com "Minha base" e "Base de *fulano*".
+
+Escolhendo a base compartilhada, ela vê e edita exatamente os mesmos
+lançamentos, categorias e limites do dono — e a barra lateral avisa que o que
+for lançado ali aparece para a outra pessoa. A base individual de cada um
+continua existindo, a um clique de distância no mesmo seletor.
+
+Alguns limites, de propósito:
+
+- **o compartilhamento é de mão única**: Ana dar acesso à base dela não dá a
+  ela acesso à base do Bob. Se os dois quiserem ver as duas, cada um convida o
+  outro;
+- **só o dono administra**: quem está de visita numa base compartilhada não
+  pode convidar nem remover ninguém dela;
+- **remover tira o acesso na hora**: o botão **Remover**, ao lado do e-mail,
+  encerra o compartilhamento no próximo rerun da pessoa;
+- o app confere a permissão no banco a cada rerun, não confia na escolha que
+  veio da tela — trocar o valor no navegador não abre a base de outra pessoa.
 
 ## Banco de dados: SQLite ou Postgres
 

@@ -737,6 +737,57 @@ with aba_ajustes:
                 st.rerun()
 
     with col_dados:
+        # ---------------------------------------------- compartilhamento
+        usuario_id = st.session_state.get("usuario_id")
+        base_ativa = st.session_state.get("base_ativa", usuario_id)
+        st.markdown("<div class='secao'>Quem mais usa esta base</div>",
+                    unsafe_allow_html=True)
+
+        if usuario_id is None:
+            st.info("Faça login para gerenciar o compartilhamento.")
+        elif base_ativa != usuario_id:
+            # Quem está de visita não administra o acesso da base alheia.
+            st.info(
+                "Você está numa base compartilhada com você. Só quem é dono "
+                "dela pode convidar ou remover pessoas — volte para a sua base "
+                "no seletor da barra lateral."
+            )
+        else:
+            st.markdown(
+                "<div class='apoio'>Convide alguém pelo e-mail da conta que a "
+                "pessoa usa para entrar. Ela passa a ver e editar exatamente "
+                "estes lançamentos — é assim que um casal mantém uma conta em "
+                "conjunto, sem perder a base individual de cada um.</div>",
+                unsafe_allow_html=True,
+            )
+            with st.form("convidar_para_base", clear_on_submit=True, border=False):
+                email_convidado = st.text_input(
+                    "E-mail", placeholder="pessoa@exemplo.com",
+                    label_visibility="collapsed",
+                )
+                if st.form_submit_button("Dar acesso a esta base"):
+                    recado = db.compartilhar_base(usuario_id, email_convidado)
+                    st.toast(recado, icon="🤝")
+                    st.rerun()
+
+            convidados = db.listar_convidados(usuario_id)
+            if not convidados:
+                st.markdown(
+                    "<div class='apoio'>Ninguém além de você por enquanto.</div>",
+                    unsafe_allow_html=True,
+                )
+            for convidado in convidados:
+                linha_esq, linha_dir = st.columns([3, 1])
+                linha_esq.markdown(
+                    f"<div class='linha-resumo'><span>{convidado}</span></div>",
+                    unsafe_allow_html=True,
+                )
+                if linha_dir.button("Remover", key=f"remover_{convidado}"):
+                    db.descompartilhar_base(usuario_id, convidado)
+                    st.toast(f"{convidado} perdeu o acesso.", icon="🚪")
+                    st.rerun()
+
+        st.divider()
         st.markdown("<div class='secao'>Seus dados</div>", unsafe_allow_html=True)
 
         arquivo = st.file_uploader(

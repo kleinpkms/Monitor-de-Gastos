@@ -57,13 +57,43 @@ def _provedor() -> str | None:
     return PROVEDOR if PROVEDOR in _bloco_auth() else None
 
 
-def _configurado() -> bool:
+CHAVES_PROVEDOR = ("client_id", "client_secret", "server_metadata_url")
+_MARCAS_DE_EXEMPLO = ("SEU_", "SEU-", "troque", "o Client ", "COLE_", "AQUI")
+
+
+def diagnosticar() -> list[str]:
+    """O que falta para o login funcionar, chave por chave. Vazio = ok.
+
+    Dizer "falta auth.auth0.client_id" poupa muito tempo em relação a um
+    "login não configurado" genérico — ainda mais porque o erro mais comum
+    não é chave errada, e sim o arquivo no lugar errado: o Streamlit
+    procura `.streamlit/secrets.toml` a partir da pasta de onde você rodou
+    o `streamlit run`, não da pasta do projeto.
+    """
     auth = _bloco_auth()
     if not auth:
-        return False
+        return ["Não achei o bloco `[auth]`. Confira se existe "
+                "`.streamlit/secrets.toml` **na pasta de onde você roda o "
+                "`streamlit run`** e se o TOML está válido."]
+
+    aninhado = PROVEDOR in auth
     bloco = auth.get(PROVEDOR, auth)
-    return all(bloco.get(chave) for chave in
-               ("client_id", "client_secret", "server_metadata_url"))
+    prefixo = f"auth.{PROVEDOR}" if aninhado else "auth"
+    problemas = [f"Falta `auth.{chave}`." for chave in ("redirect_uri", "cookie_secret")
+                 if not auth.get(chave)]
+    problemas += [f"Falta `{prefixo}.{chave}`." for chave in CHAVES_PROVEDOR
+                  if not bloco.get(chave)]
+
+    for chave in CHAVES_PROVEDOR:
+        valor = str(bloco.get(chave) or "")
+        if valor and any(m.lower() in valor.lower() for m in _MARCAS_DE_EXEMPLO):
+            problemas.append(f"`{prefixo}.{chave}` ainda está com o texto de "
+                             f"exemplo (`{valor[:34]}…`).")
+    return problemas
+
+
+def _configurado() -> bool:
+    return not diagnosticar()
 
 
 # ------------------------------------------------------------- telas
@@ -107,12 +137,19 @@ def _tela_login() -> None:
 
 
 def _tela_sem_configuracao() -> None:
+    def com_codigo(texto: str) -> str:
+        partes = texto.split("`")
+        return "".join(p if i % 2 == 0 else f"<code>{p}</code>"
+                       for i, p in enumerate(partes))
+
+    itens = "".join(f"<div style='margin-top:6px'>• {com_codigo(p)}</div>"
+                    for p in diagnosticar())
     _moldura(
         "Login não configurado",
-        "Falta o bloco <code>[auth]</code> em <code>.streamlit/secrets.toml</code>. "
-        "Copie o <code>secrets.toml.example</code> que está na raiz do projeto, "
-        "preencha com os dados da sua aplicação no Auth0 e rode de novo — "
-        "o README tem o passo a passo.",
+        f"Falta acertar o <code>.streamlit/secrets.toml</code>:{itens}"
+        "<div style='margin-top:12px'>O <code>secrets.toml.example</code>, na raiz "
+        "do projeto, tem o formato completo pronto para copiar; o README traz o "
+        "passo a passo no painel do Auth0.</div>",
     )
 
 
@@ -173,7 +210,18 @@ def exigir_login() -> int:
         st.session_state["_auth_sub"] = sub
 
     usuario_id = st.session_state["usuario_id"]
-    db.definir_usuario(usuario_id)  # o thread_local morre junto com o rerun
+    st.session_state["usuario_email"] = email
+
+    # Qual base esta sessão está olhando: a própria ou uma que alguém
+    # compartilhou. A escolha vive no session_state (o seletor fica na
+    # barra lateral, em `caixa_usuario`), mas é sempre reconferida contra o
+    # banco — a tela não manda no acesso.
+    base_id = st.session_state.get("base_ativa", usuario_id)
+    if base_id != usuario_id and not db.pode_abrir_base(usuario_id, email, base_id):
+        base_id = usuario_id
+    st.session_state["base_ativa"] = base_id
+
+    db.definir_usuario(base_id)  # o thread_local morre junto com o rerun
     return usuario_id
 
 
@@ -189,8 +237,34 @@ def caixa_usuario() -> None:
         + "</div>",
         unsafe_allow_html=True,
     )
+
+    # Seletor de base: só aparece para quem tem mais de uma (ou seja, para
+    # quem recebeu um compartilhamento).
+    usuario_id = st.session_state.get("usuario_id")
+    if usuario_id is not None:
+        bases = db.bases_visiveis(usuario_id, email)
+        if len(bases) > 1:
+            ids = [b["id"] for b in bases]
+            rotulos = {b["id"]: b["rotulo"] for b in bases}
+            atual = st.session_state.get("base_ativa", usuario_id)
+            escolhida = st.selectbox(
+                "Base em uso", ids,
+                index=ids.index(atual) if atual in ids else 0,
+                format_func=lambda i: rotulos[i], key="seletor_base",
+            )
+            if escolhida != st.session_state.get("base_ativa"):
+                st.session_state["base_ativa"] = escolhida
+                st.rerun()
+            if escolhida != usuario_id:
+                st.markdown(
+                    f"<div class='apoio'>Você está editando a "
+                    f"<strong>{rotulos[escolhida].lower()}</strong>. O que você "
+                    "lançar aqui aparece para quem compartilhou.</div>",
+                    unsafe_allow_html=True,
+                )
+
     if st.button("Sair", width="stretch"):
         # Sem isso o id do usuário anterior sobreviveria ao logout nesta aba.
-        for chave in ("usuario_id", "_auth_sub"):
+        for chave in ("usuario_id", "_auth_sub", "base_ativa", "usuario_email"):
             st.session_state.pop(chave, None)
         st.logout()

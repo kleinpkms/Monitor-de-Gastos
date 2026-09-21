@@ -290,6 +290,13 @@ _SCHEMA_SQLITE = f"""
     );
 
     {_TABELA_ORCAMENTOS_SQLITE};
+
+    CREATE TABLE IF NOT EXISTS compartilhamentos (
+        dono_id   INTEGER NOT NULL,
+        email     TEXT NOT NULL,
+        criado_em TEXT NOT NULL,
+        PRIMARY KEY (dono_id, email)
+    );
 """
 
 # Mesmas tabelas em Postgres: SERIAL no lugar do AUTOINCREMENT e
@@ -332,6 +339,13 @@ _SCHEMA_POSTGRES = """
         categoria TEXT NOT NULL,
         limite    DOUBLE PRECISION NOT NULL,
         PRIMARY KEY (usuario_id, categoria)
+    );
+
+    CREATE TABLE IF NOT EXISTS compartilhamentos (
+        dono_id   INTEGER NOT NULL,
+        email     TEXT NOT NULL,
+        criado_em TEXT NOT NULL,
+        PRIMARY KEY (dono_id, email)
     );
 """
 
@@ -491,6 +505,96 @@ def garantir_usuario(sub: str, email: str = "", nome: str = "") -> int:
             _adotar_orfaos(con, usuario_id)
         _semear_categorias(con, usuario_id)
         return usuario_id
+
+
+# ----------------------------------------------------- compartilhamento
+# O dono convida por e-mail; quem foi convidado passa a poder escolher a
+# base dele no seletor da barra lateral e mexe nela como se fosse sua —
+# é assim que um casal usa uma conta em conjunto sem perder a própria.
+# O convite é gravado pelo e-mail, e não pelo id, porque a pessoa pode
+# ainda não ter entrado no dashboard nenhuma vez.
+
+def compartilhar_base(dono_id: int, email: str) -> str:
+    """Convida um e-mail para a base do dono. Devolve o que houve, em texto."""
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return "Isso não parece um e-mail."
+
+    criar_schema()
+    with conectar() as con:
+        dono = con.execute("SELECT email FROM usuarios WHERE id = ?",
+                           (int(dono_id),)).fetchone()
+        if dono and (dono["email"] or "").strip().lower() == email:
+            return "Esse é o seu próprio e-mail — a base já é sua."
+
+        ja = con.execute(
+            "SELECT 1 AS existe FROM compartilhamentos WHERE dono_id = ? AND email = ?",
+            (int(dono_id), email),
+        ).fetchone()
+        if ja:
+            return f"{email} já tinha acesso."
+
+        con.execute(
+            "INSERT INTO compartilhamentos (dono_id, email, criado_em) VALUES (?,?,?)",
+            (int(dono_id), email,
+             datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        )
+    return f"{email} agora enxerga e edita esta base."
+
+
+def descompartilhar_base(dono_id: int, email: str) -> None:
+    with conectar() as con:
+        con.execute("DELETE FROM compartilhamentos WHERE dono_id = ? AND email = ?",
+                    (int(dono_id), (email or "").strip().lower()))
+
+
+def listar_convidados(dono_id: int) -> list[str]:
+    """E-mails que o dono convidou para a base dele."""
+    criar_schema()
+    with conectar() as con:
+        linhas = con.execute(
+            "SELECT email FROM compartilhamentos WHERE dono_id = ? ORDER BY email",
+            (int(dono_id),),
+        ).fetchall()
+    return [l["email"] for l in linhas]
+
+
+def bases_visiveis(usuario_id: int, email: str) -> list[dict]:
+    """As bases que esta pessoa pode abrir: a dela e as que lhe deram acesso.
+
+    A primeira da lista é sempre a própria. Cada item traz `id`, `rotulo`
+    (o que aparece no seletor) e `propria`.
+    """
+    criar_schema()
+    email = (email or "").strip().lower()
+    with conectar() as con:
+        eu = con.execute("SELECT nome, email FROM usuarios WHERE id = ?",
+                         (int(usuario_id),)).fetchone()
+        bases = [{
+            "id": int(usuario_id),
+            "rotulo": "Minha base",
+            "propria": True,
+            "dono": (eu["nome"] or eu["email"] or "você") if eu else "você",
+        }]
+        if not email:
+            return bases
+
+        linhas = con.execute(
+            "SELECT u.id AS id, u.nome AS nome, u.email AS email "
+            "FROM compartilhamentos c JOIN usuarios u ON u.id = c.dono_id "
+            "WHERE c.email = ? AND u.id <> ? ORDER BY u.nome, u.email",
+            (email, int(usuario_id)),
+        ).fetchall()
+    for linha in linhas:
+        dono = (linha["nome"] or linha["email"] or f"usuário {linha['id']}").strip()
+        bases.append({"id": int(linha["id"]), "rotulo": f"Base de {dono}",
+                      "propria": False, "dono": dono})
+    return bases
+
+
+def pode_abrir_base(usuario_id: int, email: str, base_id: int) -> bool:
+    """Confere o acesso antes de trocar de base — não confia no que veio da tela."""
+    return any(b["id"] == int(base_id) for b in bases_visiveis(usuario_id, email))
 
 
 def _adotar_orfaos(con: Conexao, usuario_id: int) -> None:
