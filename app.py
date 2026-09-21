@@ -375,7 +375,8 @@ with aba_extrato:
 
     if pdf_fatura is not None and st.button("Ler fatura", type="primary"):
         for chave in ("extrato_lido", "extrato_paginas", "extrato_diagnostico",
-                      "extrato_pulados", "extrato_cortou"):
+                      "extrato_pulados", "extrato_cortou",
+                          "extrato_candidatas"):
             st.session_state.pop(chave, None)
         try:
             with st.spinner("Lendo o PDF…"):
@@ -387,6 +388,7 @@ with aba_extrato:
             st.session_state["extrato_metodo"] = leitura.metodo
             st.session_state["extrato_pulados"] = leitura.pagamentos_ignorados
             st.session_state["extrato_cortou"] = leitura.cortou_futuro
+            st.session_state["extrato_candidatas"] = leitura.candidatas
         except Exception as erro:
             st.error(f"Não deu para ler o PDF: {erro}")
 
@@ -419,6 +421,18 @@ with aba_extrato:
             for nota in st.session_state.get("extrato_diagnostico", []):
                 st.markdown(f"<div class='apoio'>· {nota}</div>", unsafe_allow_html=True)
             st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+            # linhas que parecem lançamento e não casaram: o repr() mostra
+            # o caractere invisível (traço diferente, espaço estranho…)
+            candidatas = st.session_state.get("extrato_candidatas") or []
+            if candidatas:
+                st.markdown(
+                    "<div class='secao'>Linhas suspeitas, caractere por caractere"
+                    "<small> · é isto que revela espaço ou traço invisível</small></div>",
+                    unsafe_allow_html=True,
+                )
+                for linha_candidata in candidatas:
+                    st.code(linha_candidata)
 
             texto_bruto = "\n".join(paginas_pdf)
             st.download_button(
@@ -480,7 +494,8 @@ with aba_extrato:
             if st.button("Descartar leitura"):
                 for chave in ("extrato_lido", "extrato_arquivo", "extrato_paginas",
                               "extrato_diagnostico", "extrato_metodo",
-                              "extrato_pulados", "extrato_cortou"):
+                              "extrato_pulados", "extrato_cortou",
+                          "extrato_candidatas"):
                     st.session_state.pop(chave, None)
                 st.rerun()
         conf2.markdown(
@@ -513,7 +528,8 @@ with aba_extrato:
 
             for chave in ("extrato_lido", "extrato_arquivo", "extrato_paginas",
                           "extrato_diagnostico", "extrato_metodo",
-                          "extrato_pulados", "extrato_cortou"):
+                          "extrato_pulados", "extrato_cortou",
+                          "extrato_candidatas"):
                 st.session_state.pop(chave, None)
             partes = [f"{importados} importado(s)"]
             if pulados:

@@ -53,17 +53,55 @@ RE_VALOR = re.compile(
 # uma data sozinha (para reconhecer a célula de data dentro de uma tabela)
 RE_SO_DATA = re.compile(rf"^{RE_DATA.pattern}$", re.IGNORECASE)
 
+# Caractere que o pdfplumber não soube traduzir (fonte sem mapa Unicode):
+# "Pr(cid:243)xima fatura", "CAF(cid:201) EXPRESSO".
+RE_CID = re.compile(r"\(cid:\d+\)")
+
+# Espaços que não são o espaço comum (NBSP, fino, de figura…) e caracteres
+# de largura zero. O PDF entrega isso no meio da linha e o olho não vê.
+ESPACOS_ESTRANHOS = {ord(c): " " for c in
+                     "\xa0        "
+                     "     　\t"}
+INVISIVEIS = dict.fromkeys(
+    map(ord, "​‌‍⁠﻿­᠎"), None)
+
+# Todo tipo de traço: hífen, hífen sem quebra, traço de figura, en dash,
+# em dash, barra horizontal, sinal de menos, hífen-bala.
+TRACOS = "-‐‑‒–—―−⁃"
+CLASSE_TRACO = f"[{re.escape(TRACOS)}]"
+
+
+def limpar_texto_extraido(texto: str) -> str:
+    """Tira do texto do PDF o que atrapalha o regex sem aparecer na tela.
+
+    NFKC já converte NBSP e espaço fino em espaço comum e desfaz ligaduras;
+    a tradução seguinte cobre o resto dos espaços exóticos e apaga os
+    caracteres de largura zero, que o NFKC preserva.
+    """
+    limpo = unicodedata.normalize("NFKC", str(texto))
+    limpo = limpo.replace("\xa0", " ").replace(" ", " ").replace("​", "")
+    return limpo.translate(ESPACOS_ESTRANHOS).translate(INVISIVEIS)
+
+
 # ------------------------------------------------------- padrão Banco Inter
 # "17 de ago. 2026 PAGTO DEBITO AUTOMATICO - + R$ 1.327,68"
 # "21 de ago. 2026 PertoEPronto - R$ 12,98"
 # O "+" antes do R$ marca pagamento/estorno — não é despesa.
 RE_LINHA_INTER = re.compile(
-    r"^(?P<dia>\d{1,2})\s+de\s+"
+    r"(?P<dia>\d{1,2})\s+de\s+"
     r"(?P<mes>jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\.?\s*"
     r"(?P<ano>\d{4})?\s+"
-    r"(?P<desc>.+?)\s+-\s+"
+    r"(?P<desc>.+?)\s*" + CLASSE_TRACO + r"\s*"
     r"(?P<mais>\+\s*)?R\$\s*"
-    r"(?P<valor>\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})\s*$",
+    r"(?P<valor>\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})",
+    re.IGNORECASE,
+)
+
+# Pedaços usados só na depuração, para achar a linha que "parece" lançamento
+# e mostrar o repr() dela — é o repr que revela o caractere invisível.
+RE_TEM_VALOR = re.compile(r"R\$\s*[\d.,]+")
+RE_TEM_DATA_PT = re.compile(
+    r"\d{1,2}\s+de\s+(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)",
     re.IGNORECASE,
 )
 
@@ -90,11 +128,6 @@ MARCAS_FIM_INTER = tuple(re.compile(padrao) for padrao in (
 ))
 
 
-# Caractere que o pdfplumber não soube traduzir (fonte sem mapa Unicode):
-# "Pr(cid:243)xima fatura", "CAF(cid:201) EXPRESSO".
-RE_CID = re.compile(r"\(cid:\d+\)")
-
-
 def normalizar(texto: str) -> str:
     """Minúsculas, sem acento, sem lixo de fonte e com espaços colapsados."""
     limpo = RE_CID.sub("", str(texto))
@@ -115,6 +148,7 @@ class Leitura:
     diagnostico: list[str] = field(default_factory=list)
     pagamentos_ignorados: int = 0           # linhas "+ R$" (pagamento/estorno)
     cortou_futuro: bool = False             # achou "Próxima fatura" e cortou ali
+    candidatas: list[str] = field(default_factory=list)  # repr() de linhas suspeitas
 
     @property
     def texto(self) -> str:
@@ -338,37 +372,83 @@ def transacoes_da_linha(linha: str, ano_ref: int,
 
 # ------------------------------------------------------- padrão Banco Inter
 
+def _fim_da_fatura(linha_normalizada: str) -> bool:
+    return any(marca.search(linha_normalizada) for marca in MARCAS_FIM_INTER)
+
+
 def cortar_fatura_futura(texto: str) -> tuple[str, bool]:
-    """Devolve o texto até "Próxima fatura" — dali em diante é compra futura."""
+    """Devolve o texto até "Próxima fatura" — dali em diante é compra futura.
+
+    O corte só vale a partir da primeira linha que tem data e valor: o
+    resumo do alto da fatura também cita "Próxima fatura", e cortar ali
+    jogava fora o extrato inteiro.
+    """
     linhas = str(texto).splitlines()
+    achou_lancamento = False
     for i, linha in enumerate(linhas):
-        alvo = normalizar(linha)
-        if any(marca.search(alvo) for marca in MARCAS_FIM_INTER):
+        if RE_TEM_DATA_PT.search(linha) and RE_TEM_VALOR.search(linha):
+            achou_lancamento = True
+        elif achou_lancamento and _fim_da_fatura(normalizar(linha)):
             return "\n".join(linhas[:i]), True
     return texto, False
 
 
-def parsear_inter(texto: str, ano_ref: int | None = None) -> tuple[pd.DataFrame, int]:
+def linhas_candidatas(texto: str, limite: int = 6) -> list[str]:
+    """repr() das linhas que parecem lançamento — depuração de invisíveis.
+
+    Primeiro as que têm data em português E valor (as que o regex deveria
+    pegar); depois, se faltar, qualquer linha com R$.
+    """
+    com_data, so_valor = [], []
+    for linha in str(texto).splitlines():
+        if not linha.strip():
+            continue
+        tem_valor = bool(RE_TEM_VALOR.search(linha))
+        if tem_valor and RE_TEM_DATA_PT.search(linha):
+            com_data.append(repr(linha))
+        elif tem_valor:
+            so_valor.append(repr(linha))
+        if len(com_data) >= limite:
+            break
+    return (com_data + so_valor)[:limite]
+
+
+def parsear_inter(texto: str, ano_ref: int | None = None
+                  ) -> tuple[pd.DataFrame, int, bool]:
     """Lê a fatura do Banco Inter: "17 de ago. 2026 DESCRIÇÃO - R$ 12,98".
 
-    O ano vem na própria linha; o "Ano da fatura" da tela só entra se a linha
-    não trouxer um. Linhas com "+" antes do R$ são pagamento/estorno e são
-    puladas (a contagem volta junto, para o app avisar). Cada "CARTÃO ****"
-    abre uma seção nova e todas são lidas, sem repetir a mesma transação.
-    Devolve (transações, quantas linhas de pagamento foram puladas).
+    O regex é solto de propósito: não exige que a linha comece na data nem
+    termine no valor, aceita qualquer tipo de traço como separador e roda
+    com finditer, então duas transações na mesma linha também saem. O texto
+    deve chegar aqui já passado por `limpar_texto_extraido`.
+
+    O ano vem na própria linha; o "Ano da fatura" da tela só entra se a
+    linha não trouxer um. Linhas com "+" antes do R$ são pagamento/estorno
+    e são puladas (a contagem volta junto, para o app avisar). Cada
+    "CARTÃO ****" abre uma seção nova e todas são lidas, sem repetir a
+    mesma transação. A leitura para em "Próxima fatura", mas só depois de
+    já ter achado a primeira transação — o resumo do topo cita a mesma
+    expressão e cortar ali zerava o extrato inteiro.
+
+    Devolve (transações, pagamentos pulados, se parou na seção futura).
     """
     ano_ref = ano_ref or date.today().year
     achados: list[dict] = []
     vistos: set[tuple] = set()
     pagamentos = 0
     cartao = ""
+    cortou = False
 
     for linha_bruta in str(texto).splitlines():
-        linha = " ".join(linha_bruta.replace("\xa0", " ").split())
+        linha = " ".join(linha_bruta.split())
         if not linha:
             continue
 
         alvo = normalizar(linha)
+        if achados and _fim_da_fatura(alvo):
+            cortou = True
+            break
+
         cabecalho = RE_CARTAO_INTER.match(alvo)
         if cabecalho:  # "CARTÃO 5364 **** **** 1234" — troca de seção
             cartao = cabecalho.group("id") or cartao
@@ -376,34 +456,32 @@ def parsear_inter(texto: str, ano_ref: int | None = None) -> tuple[pd.DataFrame,
         if alvo.startswith(PREFIXOS_IGNORADOS_INTER):
             continue
 
-        casou = RE_LINHA_INTER.match(linha)
-        if not casou:
-            continue
+        for casou in RE_LINHA_INTER.finditer(linha):
+            if casou.group("mais"):  # "+ R$" = pagamento da fatura ou estorno
+                pagamentos += 1
+                continue
 
-        if casou.group("mais"):  # "+ R$" = pagamento da fatura ou estorno
-            pagamentos += 1
-            continue
+            mes = MESES_ABREV.get(casou.group("mes").lower())
+            if mes is None:
+                continue
+            try:
+                data_ = date(int(casou.group("ano") or ano_ref), mes,
+                             int(casou.group("dia")))
+            except ValueError:
+                continue
 
-        mes = MESES_ABREV.get(casou.group("mes").lower())
-        if mes is None:
-            continue
-        try:
-            data_ = date(int(casou.group("ano") or ano_ref), mes, int(casou.group("dia")))
-        except ValueError:
-            continue
+            valor = float(casou.group("valor").replace(".", "").replace(",", "."))
+            descricao = _limpar_descricao(casou.group("desc"))
+            if valor <= 0 or not _tem_letras(descricao):
+                continue
 
-        valor = float(casou.group("valor").replace(".", "").replace(",", "."))
-        descricao = _limpar_descricao(casou.group("desc"))
-        if valor <= 0 or not _tem_letras(descricao):
-            continue
+            chave = (cartao, data_, normalizar(descricao), round(valor, 2))
+            if chave in vistos:  # mesma linha repetida dentro da seção
+                continue
+            vistos.add(chave)
+            achados.append(_montar(data_, descricao, valor))
 
-        chave = (cartao, data_, normalizar(descricao), round(valor, 2))
-        if chave in vistos:  # mesma linha repetida dentro da seção
-            continue
-        vistos.add(chave)
-        achados.append(_montar(data_, descricao, valor))
-
-    return _como_dataframe(achados), pagamentos
+    return _como_dataframe(achados), pagamentos, cortou
 
 
 # ------------------------------------------------------- padrões genéricos
@@ -520,12 +598,18 @@ def ler_fatura(arquivo, ano_ref: int | None = None, senha: str = "") -> Leitura:
             for tabela in tabelas:
                 por_tabela += transacoes_da_tabela(tabela, ano_ref)
 
-    texto_completo = "\n".join(paginas)
-    texto, cortou = cortar_fatura_futura(texto_completo)
+    # antes de qualquer parsing: NFKC + fora espaços exóticos e invisíveis
+    texto_completo = limpar_texto_extraido("\n".join(paginas))
 
-    df_inter, pagamentos = parsear_inter(texto, ano_ref)
+    df_inter, pagamentos, cortou = parsear_inter(texto_completo, ano_ref)
+
+    # a varredura genérica só entra se o padrão do Inter não achar nada, e aí
+    # o corte da seção futura é aplicado ao texto (nunca zerando tudo)
+    texto_generico, cortou_generico = cortar_fatura_futura(texto_completo)
     df_tabela = _como_dataframe(por_tabela)
-    df_texto = parsear_texto(texto, ano_ref)
+    df_texto = parsear_texto(texto_generico, ano_ref)
+    if df_inter.empty:
+        cortou = cortou_generico
 
     # o padrão do Inter manda; tabela e varredura genérica são rede de segurança
     if not df_inter.empty:
@@ -561,5 +645,13 @@ def ler_fatura(arquivo, ano_ref: int | None = None, senha: str = "") -> Leitura:
             "e aí só com OCR."
         )
 
+    # material para descobrir caractere invisível quando nada casa
+    candidatas = linhas_candidatas(texto_completo) if escolhido.empty else []
+    if candidatas:
+        diagnostico.append(
+            f"{len(candidatas)} linha(s) parecem lançamento e não casaram — "
+            "o repr() delas está logo abaixo"
+        )
+
     return Leitura(marcar_duplicados(escolhido), paginas, metodo, diagnostico,
-                   pagamentos, cortou)
+                   pagamentos, cortou, candidatas)
