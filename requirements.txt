@@ -1,4 +1,7 @@
-streamlit>=1.50,<2.0
+# O extra [auth] é o que habilita st.login()/st.user; ele puxa o Authlib,
+# repetido abaixo com a versão mínima porque o Streamlit exige >= 1.3.2.
+streamlit[auth]>=1.50,<2.0
+Authlib>=1.3.2
 plotly>=5.22
 pandas>=2.2
 pdfplumber>=0.11

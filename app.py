@@ -15,6 +15,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+import auth
 import charts
 import database as db
 import extrato
@@ -48,7 +49,12 @@ def cartao(rotulo: str, valor: str, classe: str = "", apoio: str = "") -> str:
 
 
 carregar_css()
-db.criar_schema()
+
+# O CSS vem antes para a tela de login já sair no tema do dashboard. Daqui
+# para baixo existe um dono: `exigir_login` encerra o rerun se ninguém
+# entrou, e é ele quem diz ao `database` de quem são as linhas desta
+# sessão. Nenhuma consulta pode vir antes desta linha.
+auth.exigir_login()
 
 cores = db.mapa_cores()
 icones = db.mapa_icones()
@@ -108,6 +114,9 @@ with st.sidebar:
         else:
             st.info("Nada novo para copiar — os fixos já estão neste mês.")
 
+    st.divider()
+    auth.caixa_usuario()
+
 # ================================================================ dados
 
 # Enquanto as consultas não voltam, o lugar dos cartões fica ocupado por um
@@ -155,7 +164,7 @@ st.markdown(
 )
 st.markdown(
     f"<div class='apoio' style='margin-bottom:26px'>"
-    f"Tudo é salvo em <code>{db.onde_estou_gravando()}</code>.</div>",
+    f"Tudo é salvo na sua conta, em <code>{db.onde_estou_gravando()}</code>.</div>",
     unsafe_allow_html=True,
 )
 
