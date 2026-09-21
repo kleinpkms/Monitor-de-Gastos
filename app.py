@@ -110,9 +110,26 @@ with st.sidebar:
 
 # ================================================================ dados
 
-df_mes = db.listar_lancamentos(competencia=competencia)
-df_ant = db.listar_lancamentos(competencia=mes_anterior(competencia))
-df_todos = db.listar_lancamentos()
+# Enquanto as consultas não voltam, o lugar dos cartões fica ocupado por um
+# esqueleto pulsando. Com o banco na nuvem essa espera é visível, e tela
+# parada por um segundo parece tela travada.
+espaco_esqueleto = st.empty()
+if not st.session_state.get("ja_carregou_uma_vez"):
+    espaco_esqueleto.markdown(
+        "<div class='esqueleto-linha'></div>"
+        "<div class='esqueleto-cartoes'>"
+        + "<div class='esqueleto-cartao'></div>" * 4 +
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+with st.spinner("Carregando seus dados…"):
+    df_mes = db.listar_lancamentos(competencia=competencia)
+    df_ant = db.listar_lancamentos(competencia=mes_anterior(competencia))
+    df_todos = db.listar_lancamentos()
+
+espaco_esqueleto.empty()
+st.session_state["ja_carregou_uma_vez"] = True
 
 receitas = float(df_mes.loc[df_mes["tipo"] == "receita", "valor"].sum())
 despesas = float(df_mes.loc[df_mes["tipo"] == "despesa", "valor"].sum())
@@ -187,17 +204,30 @@ aba_visao, aba_lanc, aba_extrato, aba_orc, aba_ajustes = st.tabs(
 # ============================================================ visão geral
 
 with aba_visao:
+    # As figuras são montadas antes de desenhar a tela, sob um único
+    # spinner — é aqui que o tempo some quando o mês tem muito lançamento.
+    with st.spinner("Desenhando os gráficos…"):
+        fig_rosca = charts.rosca_categorias(df_mes, cores)
+        fig_evolucao = charts.evolucao_mensal(df_todos)
+        fig_ritmo = charts.acumulado_diario(df_mes, df_ant, competencia)
+        fig_treemap = charts.treemap_categorias(df_mes, cores)
+        fig_comparativo = charts.comparativo_categorias(df_todos, cores)
+        fig_composicao = charts.composicao_mensal(df_todos, cores)
+        fig_maiores = charts.maiores_gastos(df_mes, cores)
+        fig_metodo = charts.por_metodo(df_mes)
+
     esq, dir_ = st.columns([1, 1.35], gap="medium")
 
     with esq:
         st.markdown("<div class='secao'>Para onde o dinheiro foi</div>", unsafe_allow_html=True)
-        st.plotly_chart(charts.rosca_categorias(df_mes, cores),
-                        config=CONFIG_PLOTLY, width="stretch")
+        st.plotly_chart(fig_rosca, config=CONFIG_PLOTLY, width="stretch")
         if not df_mes[df_mes["tipo"] == "despesa"].empty:
             resumo = (df_mes[df_mes["tipo"] == "despesa"]
                       .groupby("categoria")["valor"].sum().sort_values(ascending=False))
+            # todas as categorias, não só as maiores: é aqui que a fatia
+            # pequena — que não coube com rótulo na rosca — aparece inteira
             linhas = []
-            for nome, total in resumo.head(6).items():
+            for nome, total in resumo.items():
                 fatia = total / despesas * 100 if despesas else 0
                 linhas.append(
                     f"<div class='linha-resumo'>"
@@ -207,21 +237,25 @@ with aba_visao:
                     f"<span class='neutro' style='font-size:0.76rem'>{pct(fatia)}</span></span></div>"
                 )
             st.markdown("".join(linhas), unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='apoio'>{len(resumo)} categoria(s) neste mês. "
+                "As fatias menores ficam sem rótulo na rosca para o texto não "
+                "se sobrepor — o valor delas está aqui e no toque sobre a fatia.</div>",
+                unsafe_allow_html=True,
+            )
 
     with dir_:
         st.markdown(
             "<div class='secao'>Entradas, saídas e saldo <small>· últimos meses</small></div>",
             unsafe_allow_html=True,
         )
-        st.plotly_chart(charts.evolucao_mensal(df_todos),
-                        config=CONFIG_PLOTLY, width="stretch")
+        st.plotly_chart(fig_evolucao, config=CONFIG_PLOTLY, width="stretch")
 
         st.markdown(
             "<div class='secao'>Ritmo de gasto <small>· acumulado no mês</small></div>",
             unsafe_allow_html=True,
         )
-        st.plotly_chart(charts.acumulado_diario(df_mes, df_ant, competencia),
-                        config=CONFIG_PLOTLY, width="stretch")
+        st.plotly_chart(fig_ritmo, config=CONFIG_PLOTLY, width="stretch")
 
     st.divider()
     mapa_esq, mapa_dir = st.columns([1, 1.05], gap="large")
@@ -230,32 +264,29 @@ with aba_visao:
             "<div class='secao'>Peso de cada categoria <small>· área = quanto pesou</small></div>",
             unsafe_allow_html=True,
         )
-        st.plotly_chart(charts.treemap_categorias(df_mes, cores),
-                        config=CONFIG_PLOTLY, width="stretch")
+        st.plotly_chart(fig_treemap, config=CONFIG_PLOTLY, width="stretch")
     with mapa_dir:
         st.markdown(
             "<div class='secao'>Categoria mês a mês <small>· tom mais claro = mais antigo</small></div>",
             unsafe_allow_html=True,
         )
-        st.plotly_chart(charts.comparativo_categorias(df_todos, cores),
-                        config=CONFIG_PLOTLY, width="stretch")
+        st.plotly_chart(fig_comparativo, config=CONFIG_PLOTLY, width="stretch")
 
     st.markdown(
         "<div class='secao'>Composição do gasto <small>· como a divisão mudou ao longo dos meses</small></div>",
         unsafe_allow_html=True,
     )
-    st.plotly_chart(charts.composicao_mensal(df_todos, cores),
-                    config=CONFIG_PLOTLY, width="stretch")
+    st.plotly_chart(fig_composicao, config=CONFIG_PLOTLY, width="stretch")
 
     st.divider()
     baixo_esq, baixo_dir = st.columns([1.4, 1], gap="medium")
     with baixo_esq:
         st.markdown("<div class='secao'>Maiores gastos do mês</div>", unsafe_allow_html=True)
-        st.plotly_chart(charts.maiores_gastos(df_mes, cores),
-                        config=CONFIG_PLOTLY, width="stretch")
+        st.plotly_chart(fig_maiores, config=CONFIG_PLOTLY, width="stretch")
     with baixo_dir:
         st.markdown("<div class='secao'>Como você pagou</div>", unsafe_allow_html=True)
-        st.plotly_chart(charts.por_metodo(df_mes), config=CONFIG_PLOTLY, width="stretch")
+        st.plotly_chart(fig_metodo, config=CONFIG_PLOTLY, width="stretch")
+
 
 # ============================================================ lançamentos
 
@@ -265,8 +296,9 @@ with aba_lanc:
     cat_filtro = filtro2.multiselect("Categorias", categorias["nome"].tolist())
     busca = filtro3.text_input("Buscar", placeholder="Parte da descrição ou observação")
 
-    visivel = db.listar_lancamentos(competencia, tipo_filtro or None,
-                                    cat_filtro or None, busca)
+    with st.spinner("Buscando lançamentos…"):
+        visivel = db.listar_lancamentos(competencia, tipo_filtro or None,
+                                        cat_filtro or None, busca)
 
     st.markdown(
         "<div class='apoio'>Marque <strong>Excluir</strong> para apagar a linha na hora — "
@@ -525,7 +557,10 @@ with aba_extrato:
         if confirmar:
             importados = pulados_dup = invalidos = 0
             por_competencia: dict[str, int] = {}
-            for _, linha in marcados.iterrows():
+            barra = st.progress(0.0, text="Gravando os lançamentos…")
+            for posicao, (_, linha) in enumerate(marcados.iterrows(), 1):
+                barra.progress(posicao / len(marcados),
+                               text=f"Gravando… {posicao} de {len(marcados)}")
                 data_ = pd.to_datetime(linha["data"], errors="coerce")
                 descricao_lida = str(linha["descricao"] or "").strip()
                 valor_lido = float(linha["valor"] or 0)
@@ -547,6 +582,7 @@ with aba_extrato:
                 por_competencia[mes] = por_competencia.get(mes, 0) + 1
 
             st.session_state.pop("extrato_lote", None)
+            barra.empty()
             partes = [f"{importados} importado(s)"]
             if pulados_dup:
                 partes.append(f"{pulados_dup} repetido(s) ignorado(s)")

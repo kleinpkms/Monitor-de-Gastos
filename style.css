@@ -1,8 +1,7 @@
 /* Dashboard financeiro — minimalismo com hierarquia tipográfica.
    Interface em dois neutros (fundo e superfície) + dois de texto e um
    acento verde para o que é positivo; a cor saturada fica reservada aos
-   dados. Duas famílias com papéis separados: serifada de display nos
-   números e no título, sans no resto.
+   dados. Uma família só, Rubik, com a hierarquia vindo do peso.
 
    REGRA DE OURO deste arquivo: nada de seletor amplo.
    Estilizamos (a) containers nomeados pelo data-testid do Streamlit e
@@ -13,10 +12,13 @@
    "Rerun" cortado na toolbar. A fonte dos ícones vem da classe interna
    do Streamlit e qualquer regra nossa que herde por cima a quebra. */
 
-/* Duas famílias com papéis distintos: a serifada moderna carrega os
-   números grandes e o título — é ela que dá o tom; a sans fica com
-   todo o resto, em um peso só. */
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap');
+/* Rubik em tudo — interface e gráficos. A hierarquia vem do peso e do
+   corpo, não de trocar de família: 400 no texto, 500 nos rótulos de
+   seção, 700 nos números e títulos.
+   O @import aqui serve à página e ao texto SVG do Plotly; os widgets
+   nativos do Streamlit pegam a mesma fonte por theme.fontFaces, no
+   .streamlit/config.toml. */
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap');
 
 :root {
   --fundo: #0F1216;
@@ -26,17 +28,15 @@
   --hairline: #20242B;
   --acento: #4CC38A;
   --raio: 12px;
-  --display: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
-  --corpo: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+  --fonte: 'Rubik', -apple-system, 'Segoe UI', sans-serif;
 }
 
 /* ------------------------------------------------------------ tipografia
-   A sans do corpo é aplicada nos CONTAINERS (herda para o conteúdo) e
-   nunca em elementos que possam ser ícone; a serifada entra só onde é
-   chamada pelo nome (.topo h1 e .numero). */
+   Aplicada nos CONTAINERS (herda para o conteúdo) e nunca em elementos
+   que possam ser ícone. */
 [data-testid="stAppViewContainer"],
 [data-testid="stSidebar"] {
-  font-family: var(--corpo);
+  font-family: var(--fonte);
   font-weight: 400;
 }
 
@@ -59,8 +59,7 @@ span[class*="material-symbols"] {
 /* ---------------------------------------------------------- cabeçalho */
 .topo { display: flex; align-items: baseline; gap: 14px; margin-bottom: 2px; }
 .topo h1 {
-  font-family: var(--display);
-  font-size: 2.6rem; font-weight: 400; letter-spacing: -0.01em; line-height: 1.05;
+  font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
   color: var(--texto); margin: 0; padding: 0;
 }
 .topo span { color: var(--texto-fraco); font-size: 0.86rem; }
@@ -93,15 +92,14 @@ span[class*="material-symbols"] {
 /* Os números são o elemento mais forte da tela: fonte de display,
    corpo grande e entrelinha apertada. */
 .numero {
-  font-family: var(--display);
   font-variant-numeric: tabular-nums;
-  font-weight: 400;
-  letter-spacing: -0.01em;
+  font-weight: 700;
+  letter-spacing: -0.025em;
   color: var(--texto);
   line-height: 1;
 }
-.numero-grande { font-size: 4.2rem; }
-.numero-medio { font-size: 2.1rem; }
+.numero-grande { font-size: 3.1rem; }
+.numero-medio { font-size: 1.6rem; }
 .apoio {
   color: var(--texto-fraco);
   font-size: 0.79rem;
@@ -183,6 +181,27 @@ span[class*="material-symbols"] {
 [data-testid="stSidebar"] [data-testid="stBaseButton-primaryFormSubmit"],
 [data-testid="stSidebar"] [data-testid="stBaseButton-secondaryFormSubmit"] {
   width: 100%;
+}
+
+/* ------------------------------------------------------------ esqueleto
+   Ocupa o lugar dos cartões enquanto a primeira consulta não volta, para
+   a tela não parecer travada. Só aparece uma vez por sessão. */
+.esqueleto-linha {
+  height: 30px; width: 320px; border-radius: 8px; margin-bottom: 26px;
+  background: var(--superficie); animation: pulsar 1.4s ease-in-out infinite;
+}
+.esqueleto-cartoes { display: flex; gap: 12px; }
+.esqueleto-cartao {
+  flex: 1; height: 132px; border-radius: var(--raio);
+  background: var(--superficie); animation: pulsar 1.4s ease-in-out infinite;
+}
+.esqueleto-cartao:first-child { flex: 1.7; }
+.esqueleto-cartao:nth-child(2) { animation-delay: 0.12s; }
+.esqueleto-cartao:nth-child(3) { animation-delay: 0.24s; }
+.esqueleto-cartao:nth-child(4) { animation-delay: 0.36s; }
+@keyframes pulsar {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
 }
 
 hr { border: none; border-top: 1px solid var(--hairline); margin: 2.4rem 0; }

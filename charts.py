@@ -33,6 +33,16 @@ def rosca_categorias(df: pd.DataFrame, cores: dict[str, str], altura: int = 330)
     serie = despesas.groupby("categoria")["valor"].sum().sort_values(ascending=False)
     total = float(serie.sum())
 
+    # O rótulo só entra na fatia que tem arco para ele. Abaixo do corte o
+    # texto sairia espremido ou por cima do vizinho, então a fatia fica só
+    # com a cor — o valor cheio continua na lista abaixo do gráfico e no
+    # hover. Mais fatias no mês => corte maior, porque cada uma é menor.
+    fatia_minima = 0.055 if len(serie) <= 8 else 0.075
+    rotulos = [
+        f"{nome}<br>{valor / total:.0%}" if total and valor / total >= fatia_minima else ""
+        for nome, valor in serie.items()
+    ]
+
     fig = go.Figure(
         go.Pie(
             labels=serie.index,
@@ -45,7 +55,8 @@ def rosca_categorias(df: pd.DataFrame, cores: dict[str, str], altura: int = 330)
                 line=dict(color=TEMA["fundo"], width=2),
             ),
             # rótulo na própria fatia: a cor identifica, mas nunca sozinha
-            texttemplate="%{label}<br>%{percent}",
+            text=rotulos,
+            textinfo="text",
             textposition="inside",
             insidetextorientation="horizontal",
             textfont=dict(family=f"{FONTE_UI}, sans-serif", size=12, color="#FFFFFF"),
@@ -60,8 +71,9 @@ def rosca_categorias(df: pd.DataFrame, cores: dict[str, str], altura: int = 330)
         showarrow=False, font=dict(family=f"{FONTE_UI}, sans-serif"),
     )
     fig.update_layout(**layout_base(altura, margem=dict(l=0, r=0, t=6, b=6)))
-    # esconde o rótulo que não couber, em vez de deixar texto espremido
-    fig.update_layout(showlegend=False, uniformtext=dict(minsize=10, mode="hide"))
+    # rede de segurança: se mesmo assim algum rótulo precisar encolher
+    # abaixo de 11px para caber, o Plotly esconde aquele texto (não corta).
+    fig.update_layout(showlegend=False, uniformtext=dict(minsize=11, mode="hide"))
     return fig
 
 

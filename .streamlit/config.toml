@@ -4,7 +4,31 @@ primaryColor = "#4CC38A"
 backgroundColor = "#0F1216"
 secondaryBackgroundColor = "#161A20"
 textColor = "#E9ECEF"
-font = "sans-serif"
+
+# Rubik em tudo. Declarar a fonte aqui (e não só no CSS) é o que faz os
+# widgets nativos — inputs, selectbox, tabelas, botões — herdarem também,
+# sem precisar de seletor amplo no style.css (que foi o que já quebrou os
+# ícones do Streamlit uma vez).
+font = "Rubik"
+headingFont = "Rubik"
+
+[[theme.fontFaces]]
+family = "Rubik"
+url = "https://fonts.gstatic.com/s/rubik/v31/iJWKBXyIfDnIV7nBrXw.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Rubik"
+url = "https://fonts.gstatic.com/s/rubik/v31/iJWKBXyIfDnIV7nBrXw.woff2"
+weight = 500
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Rubik"
+url = "https://fonts.gstatic.com/s/rubik/v31/iJWKBXyIfDnIV7nBrXw.woff2"
+weight = 700
+style = "normal"
 
 [server]
 headless = true

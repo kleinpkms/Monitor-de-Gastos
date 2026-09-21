@@ -37,10 +37,10 @@ TEMA = {
     "destaque": "#C9CED6",
 }
 
-# Duas famílias: a sans no corpo e a serifada de display nos números —
-# a mesma dupla do style.css, para o gráfico combinar com a página.
-FONTE_UI = "Inter"
-FONTE_NUMERO = "Instrument Serif"
+# Uma família só, a mesma da interface: o texto dentro do gráfico tem de
+# parecer parte da página, não de outro programa.
+FONTE_UI = "Rubik"
+FONTE_NUMERO = "Rubik"
 
 # --------------------------------------------------------- categorias
 # (nome, tipo, cor, ícone)
