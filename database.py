@@ -1,7 +1,13 @@
 """
-Camada de dados do dashboard. Tudo fica em um único arquivo SQLite
-(`financas.db`) criado ao lado do projeto — é só copiar esse arquivo
-para levar seus dados para outra máquina.
+Camada de dados do dashboard, que fala dois bancos:
+
+* sem `DATABASE_URL` no ambiente, grava num arquivo SQLite (`financas.db`)
+  ao lado do projeto — é só copiar esse arquivo para levar seus dados;
+* com `DATABASE_URL` (ex.: a connection string do Neon), usa Postgres.
+
+O resto do app não sabe a diferença: `conectar()` devolve sempre o mesmo
+objeto, que traduz os `?` para `%s` e cuida do dialeto quando é Postgres.
+O schema é criado sozinho na primeira conexão, nos dois casos.
 """
 
 from __future__ import annotations
@@ -9,6 +15,7 @@ from __future__ import annotations
 import os
 import random
 import sqlite3
+import threading
 from datetime import date, timedelta
 
 import pandas as pd
@@ -17,49 +24,216 @@ from config import (CATEGORIA_NAO_ATRIBUIDA, CATEGORIAS_PADRAO,
                     CORES_ANTIGAS_PADRAO)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _carregar_dotenv() -> None:
+    """Lê um .env ao lado do projeto, se o python-dotenv estiver instalado."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+
+_carregar_dotenv()
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USANDO_POSTGRES = bool(DATABASE_URL)
 DB_PATH = os.environ.get("FINANCAS_DB", os.path.join(BASE_DIR, "financas.db"))
+
+_pg_conexao = None
+_pg_trava = threading.Lock()
+_schema_pronto = False
+
+
+def onde_estou_gravando() -> str:
+    """Frase curta para a tela dizer onde os dados estão."""
+    if not USANDO_POSTGRES:
+        return f"SQLite em {os.path.basename(DB_PATH)}"
+    depois_do_arroba = DATABASE_URL.rsplit("@", 1)[-1]
+    return f"Postgres em {depois_do_arroba.split('/')[0]}"
 
 
 # --------------------------------------------------------- conexão
 
-def conectar() -> sqlite3.Connection:
-    con = sqlite3.connect(DB_PATH, check_same_thread=False)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys = ON")
+def _abrir_postgres():
+    """Conexão única, reaproveitada entre os reruns do Streamlit.
+
+    Abrir conexão nova a cada consulta custaria uma ida e volta na rede
+    por rerun; o Neon também dorme e derruba conexão parada, por isso o
+    `_pg_valida` refaz quando ela morre.
+    """
+    import psycopg2
+
+    url = DATABASE_URL
+    if "sslmode=" not in url:  # Neon (e o Render) exigem TLS
+        url += ("&" if "?" in url else "?") + "sslmode=require"
+    con = psycopg2.connect(url)
+    con.autocommit = False
     return con
 
 
-def criar_schema() -> None:
+def _pg_valida():
+    global _pg_conexao
+    import psycopg2
+
+    with _pg_trava:
+        if _pg_conexao is None or _pg_conexao.closed:
+            _pg_conexao = _abrir_postgres()
+            return _pg_conexao
+        try:
+            with _pg_conexao.cursor() as teste:
+                teste.execute("SELECT 1")
+            _pg_conexao.rollback()
+        except psycopg2.Error:
+            try:
+                _pg_conexao.close()
+            except psycopg2.Error:
+                pass
+            _pg_conexao = _abrir_postgres()
+        return _pg_conexao
+
+
+class Conexao:
+    """Fachada fina sobre sqlite3/psycopg2 com a mesma cara para o app.
+
+    Aceita sempre `?` como placeholder e devolve linhas acessíveis por
+    nome de coluna, como o `sqlite3.Row` já fazia.
+    """
+
+    def __init__(self) -> None:
+        self.postgres = USANDO_POSTGRES
+        if self.postgres:
+            self.bruta = _pg_valida()
+        else:
+            self.bruta = sqlite3.connect(DB_PATH, check_same_thread=False)
+            self.bruta.row_factory = sqlite3.Row
+            self.bruta.execute("PRAGMA foreign_keys = ON")
+
+    # -- tradução de dialeto ------------------------------------------
+    def traduzir(self, sql: str) -> str:
+        return sql.replace("?", "%s") if self.postgres else sql
+
+    def execute(self, sql: str, params=()):
+        if not self.postgres:
+            return self.bruta.execute(sql, params)
+        from psycopg2.extras import RealDictCursor
+
+        cur = self.bruta.cursor(cursor_factory=RealDictCursor)
+        cur.execute(self.traduzir(sql), params)
+        return cur
+
+    def executemany(self, sql: str, sequencia) -> None:
+        if not self.postgres:
+            self.bruta.executemany(sql, sequencia)
+            return
+        with self.bruta.cursor() as cur:
+            cur.executemany(self.traduzir(sql), list(sequencia))
+
+    def executescript(self, script: str) -> None:
+        if not self.postgres:
+            self.bruta.executescript(script)
+            return
+        with self.bruta.cursor() as cur:
+            for comando in script.split(";"):
+                if comando.strip():
+                    cur.execute(comando)
+
+    def ler_df(self, sql: str, params=()) -> pd.DataFrame:
+        return pd.read_sql_query(self.traduzir(sql), self.bruta, params=list(params))
+
+    # -- contexto ------------------------------------------------------
+    def __enter__(self) -> "Conexao":
+        return self
+
+    def __exit__(self, tipo, valor, tb) -> None:
+        if tipo is None:
+            self.bruta.commit()
+        else:
+            self.bruta.rollback()
+        if not self.postgres:
+            self.bruta.close()   # no Postgres a conexão é reaproveitada
+
+
+def conectar() -> Conexao:
+    return Conexao()
+
+
+# ------------------------------------------------------------ schema
+
+_SCHEMA_SQLITE = """
+    CREATE TABLE IF NOT EXISTS categorias (
+        nome  TEXT PRIMARY KEY,
+        tipo  TEXT NOT NULL CHECK (tipo IN ('despesa','receita')),
+        cor   TEXT NOT NULL DEFAULT '#8A9AAB',
+        icone TEXT NOT NULL DEFAULT '📦'
+    );
+
+    CREATE TABLE IF NOT EXISTS lancamentos (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        data      TEXT NOT NULL,
+        descricao TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        tipo      TEXT NOT NULL CHECK (tipo IN ('despesa','receita')),
+        valor     REAL NOT NULL,
+        metodo    TEXT DEFAULT 'Pix',
+        fixo      INTEGER NOT NULL DEFAULT 0,
+        obs       TEXT DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lanc_data ON lancamentos(data);
+
+    CREATE TABLE IF NOT EXISTS orcamentos (
+        categoria TEXT PRIMARY KEY,
+        limite    REAL NOT NULL
+    );
+"""
+
+# Mesmas tabelas em Postgres: SERIAL no lugar do AUTOINCREMENT e
+# DOUBLE PRECISION no lugar do REAL (o REAL do Postgres é de 4 bytes e
+# perderia centavos). A coluna `data` segue TEXT nos dois, para o
+# substr(data,1,7) das competências continuar idêntico.
+_SCHEMA_POSTGRES = """
+    CREATE TABLE IF NOT EXISTS categorias (
+        nome  TEXT PRIMARY KEY,
+        tipo  TEXT NOT NULL CHECK (tipo IN ('despesa','receita')),
+        cor   TEXT NOT NULL DEFAULT '#8A9AAB',
+        icone TEXT NOT NULL DEFAULT '📦'
+    );
+
+    CREATE TABLE IF NOT EXISTS lancamentos (
+        id        SERIAL PRIMARY KEY,
+        data      TEXT NOT NULL,
+        descricao TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        tipo      TEXT NOT NULL CHECK (tipo IN ('despesa','receita')),
+        valor     DOUBLE PRECISION NOT NULL,
+        metodo    TEXT DEFAULT 'Pix',
+        fixo      INTEGER NOT NULL DEFAULT 0,
+        obs       TEXT DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_lanc_data ON lancamentos(data);
+
+    CREATE TABLE IF NOT EXISTS orcamentos (
+        categoria TEXT PRIMARY KEY,
+        limite    DOUBLE PRECISION NOT NULL
+    );
+"""
+
+
+def criar_schema(forcar: bool = False) -> None:
+    """Cria tabelas e categorias padrão. Roda sozinho na primeira conexão.
+
+    O app chama isso a cada rerun; a trava `_schema_pronto` evita repetir
+    o DDL inteiro (que no Postgres custaria uma ida à rede por rerun).
+    """
+    global _schema_pronto
+    if _schema_pronto and not forcar:
+        return
+
     with conectar() as con:
-        con.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS categorias (
-                nome  TEXT PRIMARY KEY,
-                tipo  TEXT NOT NULL CHECK (tipo IN ('despesa','receita')),
-                cor   TEXT NOT NULL DEFAULT '#8A9AAB',
-                icone TEXT NOT NULL DEFAULT '📦'
-            );
-
-            CREATE TABLE IF NOT EXISTS lancamentos (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                data      TEXT NOT NULL,
-                descricao TEXT NOT NULL,
-                categoria TEXT NOT NULL,
-                tipo      TEXT NOT NULL CHECK (tipo IN ('despesa','receita')),
-                valor     REAL NOT NULL,
-                metodo    TEXT DEFAULT 'Pix',
-                fixo      INTEGER NOT NULL DEFAULT 0,
-                obs       TEXT DEFAULT ''
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_lanc_data ON lancamentos(data);
-
-            CREATE TABLE IF NOT EXISTS orcamentos (
-                categoria TEXT PRIMARY KEY,
-                limite    REAL NOT NULL
-            );
-            """
-        )
+        con.executescript(_SCHEMA_POSTGRES if con.postgres else _SCHEMA_SQLITE)
         cur = con.execute("SELECT COUNT(*) AS n FROM categorias")
         if cur.fetchone()["n"] == 0:
             con.executemany(
@@ -67,14 +241,16 @@ def criar_schema() -> None:
                 CATEGORIAS_PADRAO,
             )
         # bases criadas antes da importação de extrato podem não ter a categoria
-        con.execute(
-            "INSERT OR IGNORE INTO categorias (nome, tipo, cor, icone) VALUES (?,?,?,?)",
-            (CATEGORIA_NAO_ATRIBUIDA, "despesa", "#49525F", "❓"),
-        )
+        ignorar = ("INSERT INTO categorias (nome, tipo, cor, icone) VALUES (?,?,?,?) "
+                   "ON CONFLICT (nome) DO NOTHING" if con.postgres else
+                   "INSERT OR IGNORE INTO categorias (nome, tipo, cor, icone) VALUES (?,?,?,?)")
+        con.execute(ignorar, (CATEGORIA_NAO_ATRIBUIDA, "despesa", "#49525F", "❓"))
         _repintar_cores_padrao(con)
 
+    _schema_pronto = True
 
-def _repintar_cores_padrao(con: sqlite3.Connection) -> None:
+
+def _repintar_cores_padrao(con: Conexao) -> None:
     """Troca a paleta colorida antiga pela rampa neutra atual.
 
     Só repinta a categoria que ainda está exatamente com a cor antiga de
@@ -95,7 +271,7 @@ def _repintar_cores_padrao(con: sqlite3.Connection) -> None:
 
 def listar_categorias(tipo: str | None = None) -> pd.DataFrame:
     with conectar() as con:
-        df = pd.read_sql_query("SELECT * FROM categorias ORDER BY tipo DESC, nome", con)
+        df = con.ler_df("SELECT * FROM categorias ORDER BY tipo DESC, nome")
     if tipo:
         df = df[df["tipo"] == tipo].reset_index(drop=True)
     return df
@@ -162,7 +338,7 @@ def listar_lancamentos(
     sql += " ORDER BY data DESC, id DESC"
 
     with conectar() as con:
-        df = pd.read_sql_query(sql, con, params=params)
+        df = con.ler_df(sql, params)
 
     if df.empty:
         df = pd.DataFrame(columns=COLUNAS)
@@ -177,13 +353,13 @@ def listar_lancamentos(
 def inserir_lancamento(data_, descricao, categoria, tipo, valor, metodo="Pix",
                        fixo=False, obs="") -> int:
     with conectar() as con:
-        cur = con.execute(
-            """INSERT INTO lancamentos (data, descricao, categoria, tipo, valor, metodo, fixo, obs)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (str(data_), descricao.strip(), categoria, tipo, float(valor),
-             metodo, int(bool(fixo)), obs or ""),
-        )
-        return cur.lastrowid
+        sql = ("""INSERT INTO lancamentos (data, descricao, categoria, tipo, valor, metodo, fixo, obs)
+                  VALUES (?,?,?,?,?,?,?,?)""")
+        if con.postgres:  # no Postgres o id volta pelo RETURNING
+            sql += " RETURNING id"
+        cur = con.execute(sql, (str(data_), descricao.strip(), categoria, tipo,
+                                float(valor), metodo, int(bool(fixo)), obs or ""))
+        return cur.fetchone()["id"] if con.postgres else cur.lastrowid
 
 
 def _chave_lancamento(data_, descricao, valor) -> tuple[str, str, float]:

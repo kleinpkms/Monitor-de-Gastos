@@ -27,6 +27,8 @@ from config import (CATEGORIA_NAO_ATRIBUIDA, LINHAS_IGNORADAS_EXTRATO,
                     PALAVRAS_CHAVE_CATEGORIA, PALAVRAS_IGNORADAS_EXTRATO)
 
 COLUNAS_EXTRATO = ["importar", "data", "descricao", "categoria", "tipo", "valor", "situacao"]
+# a tabela consolidada de várias faturas ganha a coluna do arquivo de origem
+COLUNAS_LOTE = ["importar", "arquivo"] + COLUNAS_EXTRATO[1:]
 
 MESES_ABREV = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
@@ -217,6 +219,7 @@ def _ler_data(bruto: str, ano_ref: int) -> date | None:
     texto = normalizar(bruto).replace(".", "/").replace("-", "/")
     texto = re.sub(r"\s*/\s*", "/", texto)
 
+    ano_explicito = False
     if "/" in texto:
         partes = [p for p in texto.split("/") if p]
         if len(partes) < 2 or not partes[0].isdigit() or not partes[1].isdigit():
@@ -226,6 +229,7 @@ def _ler_data(bruto: str, ano_ref: int) -> date | None:
         if len(partes) > 2 and partes[2].isdigit():
             ano = int(partes[2])
             ano += 2000 if ano < 100 else 0
+            ano_explicito = True
     else:
         partes = texto.split()
         if len(partes) < 2 or not partes[0].isdigit():
@@ -240,8 +244,10 @@ def _ler_data(bruto: str, ano_ref: int) -> date | None:
     except ValueError:
         return None
 
-    # fatura de dezembro aberta em janeiro: sem o ano no PDF, volta um ano
-    if data_ > date.today() + timedelta(days=45):
+    # Quando o PDF traz o ano, ele manda — fatura futura é importada como
+    # futura, sem trava. O ajuste abaixo só vale quando o ano foi chutado
+    # (fatura de dezembro aberta em janeiro, sem ano na linha).
+    if not ano_explicito and data_ > date.today() + timedelta(days=45):
         try:
             data_ = data_.replace(year=data_.year - 1)
         except ValueError:
@@ -655,3 +661,120 @@ def ler_fatura(arquivo, ano_ref: int | None = None, senha: str = "") -> Leitura:
 
     return Leitura(marcar_duplicados(escolhido), paginas, metodo, diagnostico,
                    pagamentos, cortou, candidatas)
+
+
+# ------------------------------------------------ várias faturas de uma vez
+
+@dataclass
+class ResumoArquivo:
+    """Uma linha do resumo por arquivo mostrado antes da tabela."""
+
+    nome: str
+    transacoes: int = 0
+    novas: int = 0
+    primeira: date | None = None
+    ultima: date | None = None
+    pagamentos: int = 0
+    metodo: str = "nenhum"
+    erro: str = ""
+
+    @property
+    def periodo(self) -> str:
+        if self.primeira is None or self.ultima is None:
+            return "—"
+        if self.primeira == self.ultima:
+            return self.primeira.strftime("%d/%m/%Y")
+        return (f"{self.primeira.strftime('%d/%m/%Y')} a "
+                f"{self.ultima.strftime('%d/%m/%Y')}")
+
+
+@dataclass
+class Lote:
+    """Resultado de ler vários PDFs: uma tabela só, mais o resumo de cada um."""
+
+    transacoes: pd.DataFrame
+    resumos: list[ResumoArquivo] = field(default_factory=list)
+    paginas: dict[str, list[str]] = field(default_factory=dict)
+    candidatas: dict[str, list[str]] = field(default_factory=dict)
+
+    @property
+    def competencias(self) -> list[str]:
+        """Meses (AAAA-MM) que receberão lançamentos, na ordem."""
+        if self.transacoes.empty:
+            return []
+        return sorted({pd.Timestamp(d).strftime("%Y-%m")
+                       for d in self.transacoes["data"]})
+
+
+def ler_faturas(arquivos, ano_ref: int | None = None, senha: str = "") -> Lote:
+    """Lê vários PDFs e devolve uma tabela consolidada para revisão.
+
+    Cada arquivo é processado por conta própria — faturas de meses (e anos)
+    diferentes podem entrar juntas, porque a competência de cada lançamento
+    sai da data da própria linha, não de um campo da tela.
+
+    A marcação de repetido olha o banco inteiro (qualquer mês, para reimportar
+    a mesma fatura sem duplicar) e também o próprio lote, caso o mesmo PDF
+    venha duas vezes ou duas faturas se sobreponham.
+    """
+    partes: list[pd.DataFrame] = []
+    lote = Lote(pd.DataFrame(columns=COLUNAS_LOTE))
+
+    for arquivo in arquivos or []:
+        nome = getattr(arquivo, "name", str(arquivo))
+        resumo = ResumoArquivo(nome=nome)
+        try:
+            leitura = ler_fatura(arquivo, ano_ref, senha)
+        except Exception as erro:
+            resumo.erro = str(erro)
+            lote.resumos.append(resumo)
+            continue
+
+        lote.paginas[nome] = leitura.paginas
+        if leitura.candidatas:
+            lote.candidatas[nome] = leitura.candidatas
+        resumo.metodo = leitura.metodo
+        resumo.pagamentos = leitura.pagamentos_ignorados
+
+        df = leitura.transacoes.copy()
+        if not df.empty:
+            df.insert(1, "arquivo", nome)
+            resumo.transacoes = len(df)
+            resumo.primeira = min(df["data"])
+            resumo.ultima = max(df["data"])
+            partes.append(df)
+        lote.resumos.append(resumo)
+
+    if not partes:
+        return lote
+
+    consolidado = pd.concat(partes, ignore_index=True)
+    consolidado = consolidado.sort_values(["data", "arquivo"], kind="stable")
+    consolidado = consolidado.reset_index(drop=True)
+
+    # repetido dentro do próprio lote (o de fora, contra o banco, já veio
+    # marcado por marcar_duplicados em cada arquivo)
+    vistos: set[tuple] = set()
+    situacoes, importar = [], []
+    for _, linha in consolidado.iterrows():
+        chave = (str(linha["data"])[:10], normalizar(linha["descricao"]),
+                 round(float(linha["valor"]), 2))
+        if linha["situacao"] == "Já existe na base":
+            situacoes.append(linha["situacao"])
+            importar.append(False)
+        elif chave in vistos:
+            situacoes.append("Repetida neste lote")
+            importar.append(False)
+        else:
+            vistos.add(chave)
+            situacoes.append(linha["situacao"])
+            importar.append(True)
+    consolidado["situacao"] = situacoes
+    consolidado["importar"] = importar
+
+    for resumo in lote.resumos:
+        do_arquivo = consolidado[consolidado["arquivo"] == resumo.nome]
+        resumo.novas = int(do_arquivo["importar"].sum())
+
+    lote.transacoes = consolidado[COLUNAS_LOTE]
+    return lote

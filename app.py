@@ -137,8 +137,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    "<div class='apoio' style='margin-bottom:26px'>"
-    "Tudo é salvo em <code>financas.db</code>, no mesmo diretório do projeto.</div>",
+    f"<div class='apoio' style='margin-bottom:26px'>"
+    f"Tudo é salvo em <code>{db.onde_estou_gravando()}</code>.</div>",
     unsafe_allow_html=True,
 )
 
@@ -342,10 +342,12 @@ with aba_lanc:
 
 with aba_extrato:
     st.markdown(
-        "<div class='secao'>Fatura do cartão em PDF</div>"
-        "<div class='apoio'>Envie a fatura, confira o que foi lido — a categoria vem "
-        "sugerida pelas palavras-chave de <code>config.py</code> — e só então confirme. "
-        "Lançamentos com a mesma data, descrição e valor já na base vêm desmarcados.</div>",
+        "<div class='secao'>Faturas de cartão em PDF</div>"
+        "<div class='apoio'>Pode mandar várias faturas de uma vez, de meses "
+        "diferentes: o mês de cada lançamento sai da data da própria linha, "
+        "então fatura antiga e fatura futura caem cada uma na sua competência. "
+        "Lançamentos que já estão na base — em qualquer mês — vêm desmarcados, "
+        "e por isso dá para reimportar a mesma fatura sem duplicar.</div>",
         unsafe_allow_html=True,
     )
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
@@ -353,115 +355,108 @@ with aba_extrato:
     col_pdf, col_opcoes = st.columns([2, 1], gap="large")
 
     with col_pdf:
-        pdf_fatura = st.file_uploader(
-            "Arquivo da fatura", type=["pdf"], key="pdf_extrato",
-            help="Lê linhas no padrão data + descrição + valor (DD/MM, DD/MM/AAAA ou 05 MAR).",
+        pdfs_fatura = st.file_uploader(
+            "Arquivos das faturas", type=["pdf"], key="pdf_extrato",
+            accept_multiple_files=True,
+            help="Uma ou várias faturas. Cada PDF é lido separadamente e "
+                 "todas as transações aparecem numa tabela só para revisão.",
         )
         senha_extrato = st.text_input(
             "Senha do PDF", type="password", value=senha_extrato_padrao(),
             key="senha_extrato",
-            help="A fatura do banco vem protegida. Deixe em branco se o arquivo abrir sem senha.",
+            help="Usada em todas as faturas enviadas. Deixe em branco se os "
+                 "arquivos abrirem sem senha.",
         )
     with col_opcoes:
         ano_extrato = st.number_input(
-            "Ano da fatura", min_value=2000, max_value=2100, step=1,
-            value=int(competencia.split("-")[0]),
-            help="Usado quando a fatura traz só dia e mês.",
+            "Ano de reserva", min_value=2000, max_value=2100, step=1,
+            value=date.today().year,
+            help="Só entra em ação se alguma linha da fatura vier sem o ano. "
+                 "Quando a data traz o ano (o normal), ela é que manda.",
         )
         metodo_extrato = st.selectbox(
             "Forma de pagamento", METODOS, index=METODOS.index("Crédito"),
             key="metodo_extrato",
         )
 
-    if pdf_fatura is not None and st.button("Ler fatura", type="primary"):
-        for chave in ("extrato_lido", "extrato_paginas", "extrato_diagnostico",
-                      "extrato_pulados", "extrato_cortou",
-                          "extrato_candidatas"):
+    if pdfs_fatura and st.button(
+            f"Ler {len(pdfs_fatura)} fatura(s)", type="primary"):
+        for chave in ("extrato_lote", "extrato_paginas", "extrato_candidatas"):
             st.session_state.pop(chave, None)
         try:
-            with st.spinner("Lendo o PDF…"):
-                leitura = extrato.ler_fatura(pdf_fatura, int(ano_extrato), senha_extrato)
-            st.session_state["extrato_lido"] = leitura.transacoes
-            st.session_state["extrato_arquivo"] = pdf_fatura.name
-            st.session_state["extrato_paginas"] = leitura.paginas
-            st.session_state["extrato_diagnostico"] = leitura.diagnostico
-            st.session_state["extrato_metodo"] = leitura.metodo
-            st.session_state["extrato_pulados"] = leitura.pagamentos_ignorados
-            st.session_state["extrato_cortou"] = leitura.cortou_futuro
-            st.session_state["extrato_candidatas"] = leitura.candidatas
+            with st.spinner("Lendo os PDFs…"):
+                lote = extrato.ler_faturas(pdfs_fatura, int(ano_extrato), senha_extrato)
+            st.session_state["extrato_lote"] = lote
         except Exception as erro:
-            st.error(f"Não deu para ler o PDF: {erro}")
+            st.error(f"Não deu para ler: {erro}")
 
-    lidas = st.session_state.get("extrato_lido")
-    paginas_pdf = st.session_state.get("extrato_paginas")
+    lote = st.session_state.get("extrato_lote")
 
-    pulados_pagto = st.session_state.get("extrato_pulados", 0)
-    if pulados_pagto:
-        st.info(
-            f"{pulados_pagto} linha(s) de pagamento/estorno (valor com \"+\" na fatura) "
-            "ficaram de fora — elas abatem a fatura, não são despesa."
-        )
-    if st.session_state.get("extrato_cortou"):
-        st.caption(
-            "A seção \"Próxima fatura\" foi descartada: compras futuras e parcelas "
-            "a vencer entram quando a fatura delas chegar."
-        )
+    # ------------------------------------------------ resumo por arquivo
+    if lote is not None and lote.resumos:
+        st.markdown("<div class='secao'>O que veio de cada arquivo</div>",
+                    unsafe_allow_html=True)
+        resumo_df = pd.DataFrame([
+            {
+                "Arquivo": r.nome,
+                "Transações": r.transacoes,
+                "A importar": r.novas,
+                "Período": r.periodo,
+                "Leitura": r.erro or r.metodo,
+            }
+            for r in lote.resumos
+        ])
+        st.dataframe(resumo_df, hide_index=True, width="stretch")
 
-    if lidas is not None and lidas.empty:
-        st.warning(
-            "Nenhuma transação foi reconhecida neste PDF. Abra o texto extraído abaixo "
-            "para ver como a fatura está escrita — com esse trecho dá para ajustar o "
-            "padrão de leitura em `extrato.py`."
-        )
+        pulados = sum(r.pagamentos for r in lote.resumos)
+        if pulados:
+            st.caption(
+                f"{pulados} linha(s) de pagamento/estorno (valor com \"+\" na "
+                "fatura) ficaram de fora — elas abatem a fatura, não são despesa."
+            )
+        for r in lote.resumos:
+            if r.erro:
+                st.error(f"{r.nome}: {r.erro}")
 
     # ------------------------------------------------ depuração da leitura
-    if paginas_pdf is not None:
-        nada_lido = lidas is not None and lidas.empty
-        with st.expander("Texto extraído do PDF (conferência)", expanded=nada_lido):
-            for nota in st.session_state.get("extrato_diagnostico", []):
-                st.markdown(f"<div class='apoio'>· {nota}</div>", unsafe_allow_html=True)
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-            # linhas que parecem lançamento e não casaram: o repr() mostra
-            # o caractere invisível (traço diferente, espaço estranho…)
-            candidatas = st.session_state.get("extrato_candidatas") or []
-            if candidatas:
-                st.markdown(
-                    "<div class='secao'>Linhas suspeitas, caractere por caractere"
-                    "<small> · é isto que revela espaço ou traço invisível</small></div>",
-                    unsafe_allow_html=True,
-                )
-                for linha_candidata in candidatas:
-                    st.code(linha_candidata)
-
-            texto_bruto = "\n".join(paginas_pdf)
-            st.download_button(
-                "Baixar o texto extraído", texto_bruto.encode("utf-8"),
-                file_name="fatura_texto.txt", mime="text/plain",
+    if lote is not None and lote.paginas:
+        nada_lido = lote.transacoes.empty
+        if nada_lido:
+            st.warning(
+                "Nenhuma transação foi reconhecida. Abra o texto extraído abaixo: "
+                "o `repr()` das linhas suspeitas mostra caractere invisível que "
+                "esteja quebrando o padrão."
             )
-            for numero, texto_pagina in enumerate(paginas_pdf, 1):
-                st.markdown(
-                    f"<div class='apoio' style='margin-top:10px'>Página {numero} — "
-                    f"{len(texto_pagina)} caractere(s)</div>",
-                    unsafe_allow_html=True,
-                )
-                st.code(texto_pagina or "(sem texto nesta página)", language=None)
+        with st.expander("Texto extraído dos PDFs (conferência)", expanded=nada_lido):
+            for nome, paginas_pdf in lote.paginas.items():
+                st.markdown(f"<div class='secao'>{nome}</div>", unsafe_allow_html=True)
+                for candidata in lote.candidatas.get(nome, []):
+                    st.code(candidata)
+                for numero, texto_pagina in enumerate(paginas_pdf, 1):
+                    st.markdown(
+                        f"<div class='apoio'>Página {numero} — "
+                        f"{len(texto_pagina)} caractere(s)</div>",
+                        unsafe_allow_html=True,
+                    )
+                    st.code(texto_pagina or "(sem texto nesta página)", language=None)
 
-    if lidas is not None and not lidas.empty:
-        st.divider()
-        novos = int(lidas["importar"].sum())
-        duplicados = len(lidas) - novos
-        resumo = f"{len(lidas)} transação(ões) lidas de {st.session_state.get('extrato_arquivo', 'fatura')}"
-        if duplicados:
-            resumo += f" · {duplicados} já estão na base"
-        sem_categoria = int((lidas["categoria"] == CATEGORIA_NAO_ATRIBUIDA).sum())
-        if sem_categoria:
-            resumo += f" · {sem_categoria} sem categoria sugerida"
-        metodo_leitura = st.session_state.get("extrato_metodo", "")
-        if metodo_leitura:
-            resumo += f" · lidas por {metodo_leitura}"
-        st.markdown(f"<div class='secao'>Revisar antes de importar <small>· {resumo}</small></div>",
-                    unsafe_allow_html=True)
+    # ------------------------------------------------ tabela consolidada
+    if lote is not None and not lote.transacoes.empty:
+        lidas = lote.transacoes
+        marcadas = int(lidas["importar"].sum())
+        repetidas = len(lidas) - marcadas
+        meses = lote.competencias
+        resumo = f"{len(lidas)} transação(ões) de {len(lote.paginas)} arquivo(s)"
+        if repetidas:
+            resumo += f" · {repetidas} já na base ou repetida(s)"
+        if meses:
+            faixa = (nome_competencia(meses[0]) if len(meses) == 1
+                     else f"{nome_competencia(meses[0])} a {nome_competencia(meses[-1])}")
+            resumo += f" · {faixa}"
+        st.markdown(
+            f"<div class='secao'>Revisar antes de importar <small>· {resumo}</small></div>",
+            unsafe_allow_html=True,
+        )
 
         revisado = st.data_editor(
             lidas,
@@ -471,6 +466,8 @@ with aba_extrato:
             hide_index=True,
             column_config={
                 "importar": st.column_config.CheckboxColumn("Importar", width="small"),
+                "arquivo": st.column_config.TextColumn(
+                    "Arquivo", disabled=True, width="small"),
                 "data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", width="small"),
                 "descricao": st.column_config.TextColumn("Descrição", width="large"),
                 "categoria": st.column_config.SelectboxColumn(
@@ -492,21 +489,18 @@ with aba_extrato:
                 disabled=marcados.empty,
             )
             if st.button("Descartar leitura"):
-                for chave in ("extrato_lido", "extrato_arquivo", "extrato_paginas",
-                              "extrato_diagnostico", "extrato_metodo",
-                              "extrato_pulados", "extrato_cortou",
-                          "extrato_candidatas"):
-                    st.session_state.pop(chave, None)
+                st.session_state.pop("extrato_lote", None)
                 st.rerun()
         conf2.markdown(
             f"<div class='apoio' style='padding-top:8px'>Somando as despesas marcadas: "
             f"<strong>{brl(total_marcado)}</strong>. Elas entram como "
-            f"<em>{metodo_extrato}</em>.</div>",
+            f"<em>{metodo_extrato}</em>, cada uma no mês da sua data.</div>",
             unsafe_allow_html=True,
         )
 
         if confirmar:
-            importados = pulados = invalidos = 0
+            importados = pulados_dup = invalidos = 0
+            por_competencia: dict[str, int] = {}
             for _, linha in marcados.iterrows():
                 data_ = pd.to_datetime(linha["data"], errors="coerce")
                 descricao_lida = str(linha["descricao"] or "").strip()
@@ -516,28 +510,38 @@ with aba_extrato:
                     continue
                 data_txt = data_.strftime("%Y-%m-%d")
                 if db.lancamento_existe(data_txt, descricao_lida, valor_lido):
-                    pulados += 1
+                    pulados_dup += 1
                     continue
                 db.inserir_lancamento(
                     data_txt, descricao_lida,
                     linha["categoria"] or CATEGORIA_NAO_ATRIBUIDA,
                     linha["tipo"] or "despesa", valor_lido, metodo_extrato,
-                    False, "Importado da fatura em PDF",
+                    False, f"Fatura em PDF · {linha['arquivo']}",
                 )
                 importados += 1
+                mes = data_txt[:7]
+                por_competencia[mes] = por_competencia.get(mes, 0) + 1
 
-            for chave in ("extrato_lido", "extrato_arquivo", "extrato_paginas",
-                          "extrato_diagnostico", "extrato_metodo",
-                          "extrato_pulados", "extrato_cortou",
-                          "extrato_candidatas"):
-                st.session_state.pop(chave, None)
+            st.session_state.pop("extrato_lote", None)
             partes = [f"{importados} importado(s)"]
-            if pulados:
-                partes.append(f"{pulados} repetido(s) ignorado(s)")
+            if pulados_dup:
+                partes.append(f"{pulados_dup} repetido(s) ignorado(s)")
             if invalidos:
                 partes.append(f"{invalidos} linha(s) incompleta(s)")
             st.toast(" · ".join(partes), icon="📄")
+            if por_competencia:
+                st.session_state["extrato_distribuicao"] = {
+                    nome_competencia(m): n for m, n in sorted(por_competencia.items())
+                }
             st.rerun()
+
+    distribuicao = st.session_state.pop("extrato_distribuicao", None)
+    if distribuicao:
+        st.success(
+            "Lançamentos distribuídos por mês: "
+            + " · ".join(f"{mes}: {n}" for mes, n in distribuicao.items())
+            + ". Troque o mês de referência na barra lateral para ver cada um."
+        )
 
 # =============================================================== orçamento
 
