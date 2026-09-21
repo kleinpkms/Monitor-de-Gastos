@@ -1,0 +1,164 @@
+/* Dashboard financeiro — visual minimalista.
+   Paleta: três neutros (fundo, texto, texto fraco) + um acento verde.
+   O acento marca só o que é positivo; o negativo fica no texto forte.
+
+   REGRA DE OURO deste arquivo: nada de seletor amplo.
+   Estilizamos (a) containers nomeados pelo data-testid do Streamlit e
+   (b) as classes que o app cria (.cartao, .secao, .trilho…).
+   Nunca `button`, `[class*="st-"]`, `::before`/`::after` genéricos ou
+   font-family global — foi exatamente isso que fazia os ícones do
+   Streamlit (Material Symbols) aparecerem como texto: "uploadUpload",
+   "Rerun" cortado na toolbar. A fonte dos ícones vem da classe interna
+   do Streamlit e qualquer regra nossa que herde por cima a quebra. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+
+:root {
+  --fundo: #0F1216;
+  --superficie: #161A20;
+  --texto: #E9ECEF;
+  --texto-fraco: #8C929B;
+  --hairline: #21262E;
+  --acento: #4CC38A;
+  --raio: 10px;
+}
+
+/* ------------------------------------------------------------ tipografia
+   Uma família, dois pesos: 400 no corpo, 600 em títulos e números.
+   Aplicada nos CONTAINERS (herda para o conteúdo) e nunca em elementos
+   que possam ser ícone. */
+[data-testid="stAppViewContainer"],
+[data-testid="stSidebar"] {
+  font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Cinto de segurança: se alguma regra nossa vazar, os ícones do
+   Streamlit continuam com a fonte de ícone. */
+[data-testid="stIconMaterial"],
+span[class*="material-symbols"] {
+  font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+}
+
+/* ------------------------------------------------------------- estrutura */
+[data-testid="stAppViewContainer"] { background: var(--fundo); }
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stMainBlockContainer"] { padding-top: 3rem; max-width: 1240px; }
+[data-testid="stSidebar"] { background: var(--fundo); border-right: 1px solid var(--hairline); }
+
+/* respiro entre blocos verticais — separação por espaço, não por linha */
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] { gap: 1.15rem; }
+
+/* ---------------------------------------------------------- cabeçalho */
+.topo { display: flex; align-items: baseline; gap: 12px; margin-bottom: 2px; }
+.topo h1 {
+  font-size: 1.6rem; font-weight: 600; letter-spacing: -0.015em;
+  color: var(--texto); margin: 0; padding: 0;
+}
+.topo span { color: var(--texto-fraco); font-size: 0.9rem; font-weight: 400; }
+
+/* ------------------------------------------------------------- cartões
+   Sem gradiente, sem sombra, sem borda: só um fundo um passo acima. */
+.cartao, .cartao-saldo {
+  background: var(--superficie);
+  border-radius: var(--raio);
+  padding: 20px 22px;
+  height: 100%;
+  min-height: 124px;
+}
+
+.rotulo {
+  color: var(--texto-fraco);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.2;
+  margin-bottom: 10px;
+}
+.numero {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--texto);
+  line-height: 1.1;
+}
+.numero-grande { font-size: 2.1rem; }
+.numero-medio { font-size: 1.35rem; }
+.apoio {
+  color: var(--texto-fraco);
+  font-size: 0.79rem;
+  font-weight: 400;
+  margin-top: 10px;
+  line-height: 1.55;
+}
+.entrada { color: var(--acento); }
+.saida, .atencao { color: var(--texto); }
+.neutro { color: var(--texto-fraco); }
+
+/* --------------------------------------------------------- orçamentos */
+.orc { margin-bottom: 22px; }
+.orc-topo {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 0.88rem; color: var(--texto); margin-bottom: 8px;
+}
+.orc-valor {
+  font-variant-numeric: tabular-nums;
+  color: var(--texto-fraco); font-size: 0.82rem;
+}
+.trilho {
+  position: relative; height: 6px; border-radius: 99px;
+  background: var(--hairline); overflow: hidden;
+}
+.preenchido { height: 100%; border-radius: 99px; }
+.marca {
+  position: absolute; top: -4px; width: 1px; height: 14px;
+  background: var(--texto-fraco); opacity: 0.5;
+}
+.orc-nota { font-size: 0.75rem; color: var(--texto-fraco); margin-top: 7px; }
+
+/* --------------------------------------------------------- categorias */
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 2px 3px 0; margin: 0 18px 10px 0;
+  font-size: 0.83rem; color: var(--texto-fraco);
+}
+.chip i {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--texto-fraco); display: inline-block;
+}
+
+/* ----------------------------------------------------- títulos de seção */
+.secao {
+  font-size: 0.95rem; font-weight: 600; color: var(--texto);
+  margin: 26px 0 14px 0;
+}
+.secao:first-child { margin-top: 0; }
+.secao small { font-weight: 400; color: var(--texto-fraco); }
+
+/* --------------------------------------------------------------- linhas */
+.linha-resumo {
+  display: flex; justify-content: space-between;
+  padding: 9px 0; font-size: 0.86rem; color: var(--texto);
+}
+.linha-resumo + .linha-resumo { border-top: 1px solid var(--hairline); }
+
+/* ----------------------------------------------------------------- abas
+   Só cor e espaçamento; nada que envolva fonte, ícone ou pseudo-elemento. */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+  gap: 2px; border-bottom: 1px solid var(--hairline); margin-bottom: 8px;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+  height: 40px; padding: 0 14px; background: transparent;
+  color: var(--texto-fraco);
+}
+[data-testid="stTabs"] [aria-selected="true"] { color: var(--texto); }
+
+/* ------------------------------------------------------------- sidebar
+   Escopado ao container da sidebar: só largura, para os botões ocuparem
+   a coluna. Nada de borda, fonte ou ícone. */
+[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"],
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"],
+[data-testid="stSidebar"] [data-testid="stBaseButton-primaryFormSubmit"],
+[data-testid="stSidebar"] [data-testid="stBaseButton-secondaryFormSubmit"] {
+  width: 100%;
+}
+
+hr { border: none; border-top: 1px solid var(--hairline); margin: 1.6rem 0; }

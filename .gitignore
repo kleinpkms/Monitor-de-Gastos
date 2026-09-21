@@ -1,8 +1,5 @@
-node_modules/
-dist/
-.env
-.env.local
-.vercel/
+financas.db
 __pycache__/
 *.pyc
 .venv/
+.streamlit/secrets.toml
