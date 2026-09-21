@@ -2,10 +2,17 @@
 Configuração central do dashboard: paleta, tipografia, categorias e
 template dos gráficos.
 
-Paleta minimalista: três neutros (fundo, texto, texto fraco) mais um
-acento verde. O acento marca só o que é positivo — entradas e saldo
-sobrando; o que sai fica no ramo neutro, e as categorias são uma rampa
-de cinzas ordenada, o que dispensa decorar legenda de cor.
+A interface é neutra: dois tons de fundo, dois de texto e um acento
+verde para o que é positivo. A cor forte fica reservada para os dados.
+
+As cores das categorias são uma paleta categórica escolhida por busca e
+conferida com o validador da skill de dataviz (OKLab, fundo #0F1216):
+as seis primeiras — as que costumam dominar um mês — passam o piso de
+visão normal (pior par ΔE 15,8) e ficam na faixa de daltonismo que exige
+rótulo junto (ΔE 6,0); com as onze juntas cai para ~11 / ~5, que é o teto
+matemático desse número de cores simultâneas. Por isso todo
+gráfico com muitas fatias carrega rótulo ou legenda: a cor identifica,
+mas nunca sozinha.
 """
 
 from __future__ import annotations
@@ -30,41 +37,50 @@ TEMA = {
     "destaque": "#C9CED6",
 }
 
-# Uma família só, dois pesos (400 no corpo, 600 em título e número).
+# Duas famílias: a sans no corpo e a serifada de display nos números —
+# a mesma dupla do style.css, para o gráfico combinar com a página.
 FONTE_UI = "Inter"
-FONTE_NUMERO = "Inter"
+FONTE_NUMERO = "Instrument Serif"
 
 # --------------------------------------------------------- categorias
 # (nome, tipo, cor, ícone)
 CATEGORIAS_PADRAO = [
-    ("Moradia", "despesa", "#E4E8EC", "🏠"),
-    ("Mercado", "despesa", "#D6DBE1", "🛒"),
-    ("Alimentação", "despesa", "#C8CED6", "🍽️"),
-    ("Transporte", "despesa", "#BAC1CA", "🚌"),
-    ("Saúde", "despesa", "#ACB4BF", "💊"),
-    ("Educação", "despesa", "#9EA7B3", "📚"),
-    ("Lazer", "despesa", "#909AA8", "🎬"),
-    ("Assinaturas", "despesa", "#828D9C", "📺"),
-    ("Compras", "despesa", "#748090", "👕"),
-    ("Investimentos", "despesa", "#667385", "📈"),
-    ("Outros", "despesa", "#586679", "📦"),
-    ("Não atribuído", "despesa", "#49525F", "❓"),
-    ("Salário", "receita", "#4CC38A", "💼"),
-    ("Freelance", "receita", "#6FCFA0", "💻"),
-    ("Rendimentos", "receita", "#92DBB7", "🏦"),
-    ("Outras entradas", "receita", "#B5E7CD", "✨"),
+    # Ordem importa: as primeiras são as que mais aparecem num mês, e ficam
+    # com os tons mais separados entre si (ver comentário da paleta acima).
+    ("Moradia", "despesa", "#3987E5", "🏠"),
+    ("Alimentação", "despesa", "#C52012", "🍽️"),
+    ("Mercado", "despesa", "#00AD54", "🛒"),
+    ("Transporte", "despesa", "#A033AB", "🚌"),
+    ("Saúde", "despesa", "#C46B91", "💊"),
+    ("Carro", "despesa", "#9C7B00", "🚗"),
+    ("Lazer", "despesa", "#008169", "🎬"),
+    ("Educação", "despesa", "#00A7B2", "📚"),
+    ("Assinaturas", "despesa", "#6450D8", "📺"),
+    ("Compras", "despesa", "#BA5DDC", "👕"),
+    ("Investimentos", "despesa", "#EC5022", "📈"),
+    ("Outros", "despesa", "#6B7480", "📦"),
+    ("Não atribuído", "despesa", "#454C57", "❓"),
+    # Receitas nunca dividem gráfico com despesas, então podem ficar numa
+    # família própria — verde é o sinal de dinheiro entrando.
+    ("Salário", "receita", "#2FB673", "💼"),
+    ("Freelance", "receita", "#8CB92B", "💻"),
+    ("Rendimentos", "receita", "#0FA3A3", "🏦"),
+    ("Outras entradas", "receita", "#5FD08A", "✨"),
 ]
 
 # Cores da paleta antiga (colorida). A migração em database.py só repinta
 # categorias que ainda estão com um destes valores — cor escolhida a mão
 # pelo usuário no seletor de cor é preservada.
 CORES_ANTIGAS_PADRAO = {
-    "Moradia": "#7C6BD6", "Mercado": "#5FA85A", "Alimentação": "#E08A3C",
-    "Transporte": "#4AA3B8", "Saúde": "#D95B7F", "Educação": "#8F7AC4",
-    "Lazer": "#E0603C", "Assinaturas": "#3FA8A0", "Compras": "#C7A24B",
-    "Investimentos": "#3FBF7F", "Outros": "#8A9AAB", "Não atribuído": "#6B7785",
-    "Salário": "#3FBF7F", "Freelance": "#5BD3A0", "Rendimentos": "#79C9E8",
-    "Outras entradas": "#A8D98A",
+    # rampa cinza monocromática (paleta anterior)
+    "Moradia": "#E4E8EC", "Mercado": "#D6DBE1", "Alimentação": "#C8CED6",
+    "Transporte": "#BAC1CA", "Saúde": "#ACB4BF", "Educação": "#9EA7B3",
+    "Lazer": "#909AA8", "Assinaturas": "#828D9C", "Compras": "#748090",
+    "Investimentos": "#667385", "Outros": "#586679", "Não atribuído": "#49525F",
+    "Salário": "#4CC38A", "Freelance": "#6FCFA0", "Rendimentos": "#92DBB7",
+    "Outras entradas": "#B5E7CD",
+    # e a paleta colorida original, para bases bem antigas
+    "Moradia_v1": "#7C6BD6", "Mercado_v1": "#5FA85A", "Alimentação_v1": "#E08A3C",
 }
 
 METODOS = ["Pix", "Débito", "Crédito", "Dinheiro", "Boleto", "Transferência"]
@@ -183,12 +199,24 @@ PALAVRAS_CHAVE_CATEGORIA: dict[str, list[str]] = {
         "cafeteria", "starbucks", "doceria", "sorveteria", "acai", "bar do",
         "boteco", "churrascaria", "temakeria", "sushi",
     ],
+    # Transporte = deslocamento que você não dirige (app, ônibus, metrô, viagem)
     "Transporte": [
-        "uber", "99app", "99 tecnologia", "cabify", "posto ", "ipiranga",
-        "shell", "petrobras", "br mania", "combustivel", "estacionamento",
-        "estapar", "pedagio", "sem parar", "conectcar", "veloe", "metro ",
-        "bilhete unico", "riocard", "localiza", "movida", "unidas", "buser",
-        "clickbus", "latam", "gol linhas", "azul linhas",
+        "uber", "99app", "99 tecnologia", "cabify", "indriver", "metro ",
+        "metro rio", "bilhete unico", "riocard", "bom onibus", "vlt", "brt ",
+        "trem ", "supervia", "buser", "clickbus", "rodoviaria", "latam",
+        "gol linhas", "azul linhas", "localiza", "movida", "unidas",
+    ],
+    # Carro = o custo de ter o seu (combustível, manutenção, imposto, seguro)
+    "Carro": [
+        "combustivel", "posto ", "posto de", "auto posto", "ipiranga", "shell",
+        "petrobras", "br mania", "gasolina", "etanol", "alcool", "diesel",
+        "gnv ", "estacionamento", "estapar", "parking", "pedagio", "sem parar",
+        "conectcar", "veloe", "autopass", "oficina", "mecanica", "auto center",
+        "autopecas", "auto pecas", "funilaria", "borracharia", "pneu",
+        "alinhamento", "balanceamento", "lava jato", "lava rapido", "lavagem",
+        "ipva", "licenciamento", "detran", "dpvat", "seguro auto",
+        "seguro automovel", "porto seguro auto", "multa transito",
+        "troca de oleo", "revisao",
     ],
     "Saúde": [
         "farmacia", "drogaria", "drogasil", "droga raia", "raia drogasil",

@@ -224,6 +224,30 @@ with aba_visao:
                         config=CONFIG_PLOTLY, width="stretch")
 
     st.divider()
+    mapa_esq, mapa_dir = st.columns([1, 1.05], gap="large")
+    with mapa_esq:
+        st.markdown(
+            "<div class='secao'>Peso de cada categoria <small>· área = quanto pesou</small></div>",
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(charts.treemap_categorias(df_mes, cores),
+                        config=CONFIG_PLOTLY, width="stretch")
+    with mapa_dir:
+        st.markdown(
+            "<div class='secao'>Categoria mês a mês <small>· tom mais claro = mais antigo</small></div>",
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(charts.comparativo_categorias(df_todos, cores),
+                        config=CONFIG_PLOTLY, width="stretch")
+
+    st.markdown(
+        "<div class='secao'>Composição do gasto <small>· como a divisão mudou ao longo dos meses</small></div>",
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(charts.composicao_mensal(df_todos, cores),
+                    config=CONFIG_PLOTLY, width="stretch")
+
+    st.divider()
     baixo_esq, baixo_dir = st.columns([1.4, 1], gap="medium")
     with baixo_esq:
         st.markdown("<div class='secao'>Maiores gastos do mês</div>", unsafe_allow_html=True)

@@ -42,9 +42,13 @@ def rosca_categorias(df: pd.DataFrame, cores: dict[str, str], altura: int = 330)
             direction="clockwise",
             marker=dict(
                 colors=[cores.get(c, TEMA["texto_fraco"]) for c in serie.index],
-                line=dict(color=TEMA["superficie"], width=3),
+                line=dict(color=TEMA["fundo"], width=2),
             ),
-            textinfo="none",
+            # rótulo na própria fatia: a cor identifica, mas nunca sozinha
+            texttemplate="%{label}<br>%{percent}",
+            textposition="inside",
+            insidetextorientation="horizontal",
+            textfont=dict(family=f"{FONTE_UI}, sans-serif", size=12, color="#FFFFFF"),
             hovertemplate="<b>%{label}</b><br>%{customdata}<br>%{percent}<extra></extra>",
             customdata=[brl(v) for v in serie.values],
         )
@@ -56,7 +60,8 @@ def rosca_categorias(df: pd.DataFrame, cores: dict[str, str], altura: int = 330)
         showarrow=False, font=dict(family=f"{FONTE_UI}, sans-serif"),
     )
     fig.update_layout(**layout_base(altura, margem=dict(l=0, r=0, t=6, b=6)))
-    fig.update_layout(showlegend=False)
+    # esconde o rótulo que não couber, em vez de deixar texto espremido
+    fig.update_layout(showlegend=False, uniformtext=dict(minsize=10, mode="hide"))
     return fig
 
 
@@ -188,4 +193,154 @@ def por_metodo(df: pd.DataFrame, altura: int = 240) -> go.Figure:
     fig.update_layout(**layout_base(altura, margem=dict(l=8, r=70, t=8, b=8)))
     fig.update_xaxes(visible=False, range=[0, float(serie.max()) * 1.3])
     fig.update_yaxes(showgrid=False)
+    return fig
+
+
+# ============================================================ novos estilos
+# Todos reaproveitam o mesmo mapa `cores` das categorias, para a mesma
+# categoria ter a mesma cor em qualquer gráfico da tela.
+
+def _despesas_por_mes(df: pd.DataFrame, meses: int) -> pd.DataFrame:
+    """Tabela categoria × competência com a soma de despesas."""
+    despesas = df[df["tipo"] == "despesa"]
+    if despesas.empty:
+        return pd.DataFrame()
+    base = despesas.copy()
+    base["competencia"] = base["data"].dt.strftime("%Y-%m")
+    tabela = base.pivot_table(index="categoria", columns="competencia",
+                              values="valor", aggfunc="sum", fill_value=0.0)
+    return tabela[sorted(tabela.columns)[-meses:]]
+
+
+def _rgba(cor_hex: str, alfa: float) -> str:
+    cor_hex = cor_hex.lstrip("#")
+    r, g, b = (int(cor_hex[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alfa})"
+
+
+def comparativo_categorias(df: pd.DataFrame, cores: dict[str, str],
+                           meses: int = 3, quantidade: int = 8,
+                           altura: int = 420) -> go.Figure:
+    """Barras horizontais: quanto cada categoria custou em cada um dos últimos meses.
+
+    A cor continua sendo a da categoria; o mês entra como opacidade (mais
+    claro = mais antigo), para não gastar uma segunda escala de cor.
+    """
+    tabela = _despesas_por_mes(df, meses)
+    if tabela.empty:
+        return _vazio("Sem despesas para comparar.", altura)
+
+    tabela = tabela.loc[tabela.sum(axis=1).sort_values().index][-quantidade:]
+    competencias = list(tabela.columns)
+    opacidades = [0.4 + 0.6 * (i + 1) / len(competencias) for i in range(len(competencias))]
+
+    fig = go.Figure()
+    for i, competencia in enumerate(competencias):
+        fig.add_bar(
+            y=list(tabela.index), x=tabela[competencia], orientation="h",
+            name=rotulo_curto(competencia),
+            showlegend=False,   # a legenda vem das amostras neutras abaixo
+            marker=dict(
+                color=[_rgba(cores.get(c, TEMA["texto_fraco"]), opacidades[i])
+                       for c in tabela.index],
+                line=dict(color=TEMA["fundo"], width=2),   # respiro entre barras
+            ),
+            hovertemplate="<b>%{y}</b><br>" + rotulo_curto(competencia)
+                          + "<br>%{customdata}<extra></extra>",
+            customdata=[brl(v) for v in tabela[competencia]],
+        )
+
+    # A barra usa a cor da categoria, então o quadradinho da legenda não pode
+    # ser colorido (seria a cor de uma categoria qualquer). Estas séries vazias
+    # existem só para a legenda mostrar o que cada nível de opacidade significa.
+    # São marcadores, e não barras: uma barra vazia entraria no agrupamento e
+    # espremeria as de verdade.
+    for i, competencia in enumerate(competencias):
+        fig.add_scatter(
+            y=[None], x=[None], mode="markers", name=rotulo_curto(competencia),
+            marker=dict(symbol="square", size=11,
+                        color=_rgba(TEMA["texto"], opacidades[i])),
+            hoverinfo="skip",
+        )
+
+    fig.update_layout(**layout_base(altura, margem=dict(l=8, r=16, t=34, b=8)))
+    fig.update_layout(barmode="group", bargap=0.35, bargroupgap=0.08)
+    fig.update_xaxes(tickprefix="R$ ", tickformat=",.0f", showgrid=True,
+                     gridcolor=TEMA["linha"], griddash="dot")
+    fig.update_yaxes(showgrid=False, tickfont=dict(size=12))
+    return fig
+
+
+def treemap_categorias(df: pd.DataFrame, cores: dict[str, str],
+                       altura: int = 420) -> go.Figure:
+    """Treemap do mês: a área é o peso da categoria no total."""
+    despesas = df[df["tipo"] == "despesa"]
+    if despesas.empty:
+        return _vazio("Sem despesas neste mês.", altura)
+
+    serie = despesas.groupby("categoria")["valor"].sum().sort_values(ascending=False)
+    total = float(serie.sum())
+
+    fig = go.Figure(go.Treemap(
+        labels=list(serie.index),
+        parents=[""] * len(serie),
+        values=list(serie.values),
+        marker=dict(
+            colors=[cores.get(c, TEMA["texto_fraco"]) for c in serie.index],
+            line=dict(color=TEMA["fundo"], width=2),
+        ),
+        # o rótulo dentro do bloco é o que garante a leitura sem depender da cor
+        texttemplate="<b>%{label}</b><br>%{customdata}<br>%{percentRoot}",
+        textfont=dict(family=f"{FONTE_UI}, sans-serif", size=13, color="#FFFFFF"),
+        customdata=[brl(v) for v in serie.values],
+        hovertemplate="<b>%{label}</b><br>%{customdata}<br>%{percentRoot} do mês<extra></extra>",
+        tiling=dict(pad=2),
+        sort=True,
+    ))
+    fig.update_layout(**layout_base(altura, margem=dict(l=0, r=0, t=0, b=0)))
+    fig.update_layout(
+        uniformtext=dict(minsize=11, mode="hide"),
+        annotations=[dict(
+            text=f"total {brl(total)}", x=1, y=-0.04, xref="paper", yref="paper",
+            xanchor="right", showarrow=False,
+            font=dict(size=12, color=TEMA["texto_fraco"]),
+        )],
+    )
+    return fig
+
+
+def composicao_mensal(df: pd.DataFrame, cores: dict[str, str], meses: int = 8,
+                      principais: int = 6, altura: int = 380) -> go.Figure:
+    """Área empilhada: como a composição do gasto mudou ao longo dos meses.
+
+    Só as `principais` categorias ficam separadas; o resto vira "Outras",
+    porque acima disso a leitura por cor deixa de funcionar.
+    """
+    tabela = _despesas_por_mes(df, meses)
+    if tabela.empty or len(tabela.columns) < 2:
+        return _vazio("São necessários pelo menos dois meses de despesas.", altura)
+
+    ordem = tabela.sum(axis=1).sort_values(ascending=False)
+    destaque = list(ordem.index[:principais])
+    resto = [c for c in ordem.index if c not in destaque]
+    empilhado = tabela.loc[destaque]
+    if resto:
+        empilhado.loc["Outras"] = tabela.loc[resto].sum()
+
+    rotulos = [rotulo_curto(c) for c in empilhado.columns]
+    fig = go.Figure()
+    for categoria in empilhado.index:
+        cor = cores.get(categoria, TEMA["texto_fraco"])
+        fig.add_scatter(
+            x=rotulos, y=empilhado.loc[categoria], name=str(categoria),
+            mode="lines", stackgroup="gasto",
+            line=dict(width=2, color=TEMA["fundo"]),   # fio de respiro entre faixas
+            fillcolor=_rgba(cor, 0.85),
+            hovertemplate=f"<b>{categoria}</b><br>%{{customdata}}<extra></extra>",
+            customdata=[brl(v) for v in empilhado.loc[categoria]],
+        )
+
+    fig.update_layout(**layout_base(altura, margem=dict(l=8, r=8, t=34, b=8)))
+    fig.update_layout(hovermode="x unified")
+    fig.update_yaxes(tickprefix="R$ ", tickformat=",.0f")
     return fig

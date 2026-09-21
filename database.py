@@ -240,11 +240,13 @@ def criar_schema(forcar: bool = False) -> None:
                 "INSERT INTO categorias (nome, tipo, cor, icone) VALUES (?,?,?,?)",
                 CATEGORIAS_PADRAO,
             )
-        # bases criadas antes da importação de extrato podem não ter a categoria
+        # Categorias padrão que nasceram depois da base (Carro, Não atribuído…)
+        # entram sem tocar nas que já existem nem nas que você criou.
         ignorar = ("INSERT INTO categorias (nome, tipo, cor, icone) VALUES (?,?,?,?) "
                    "ON CONFLICT (nome) DO NOTHING" if con.postgres else
                    "INSERT OR IGNORE INTO categorias (nome, tipo, cor, icone) VALUES (?,?,?,?)")
-        con.execute(ignorar, (CATEGORIA_NAO_ATRIBUIDA, "despesa", "#49525F", "❓"))
+        for padrao in CATEGORIAS_PADRAO:
+            con.execute(ignorar, padrao)
         _repintar_cores_padrao(con)
 
     _schema_pronto = True
