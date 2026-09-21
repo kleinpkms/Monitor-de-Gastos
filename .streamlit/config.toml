@@ -1,14 +1,16 @@
 [theme]
 base = "dark"
-primaryColor = "#3FBF7F"
-backgroundColor = "#12181F"
-secondaryBackgroundColor = "#1A222C"
-textColor = "#E6EDF3"
+primaryColor = "#4CC38A"
+backgroundColor = "#0F1216"
+secondaryBackgroundColor = "#161A20"
+textColor = "#E9ECEF"
+font = "sans-serif"
 
 [server]
 headless = true
-port = 8501
 fileWatcherType = "auto"
+# Sem porta fixa aqui: em produção quem manda é o --server.port $PORT do
+# comando de start (Render injeta a porta). Localmente o Streamlit usa 8501.
 
 [browser]
 gatherUsageStats = false
